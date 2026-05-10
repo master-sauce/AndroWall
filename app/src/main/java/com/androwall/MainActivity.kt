@@ -28,6 +28,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -62,14 +63,20 @@ fun AndroWallApp() {
     val context = LocalContext.current
     val dao = AppDatabase.getDatabase(context).appDao()
 
-    NavHost(navController, startDestination = "main") {
+    // EnterTransition.None / ExitTransition.None eliminates the white flash between screens
+    NavHost(
+        navController, startDestination = "main",
+        enterTransition    = { EnterTransition.None },
+        exitTransition     = { ExitTransition.None },
+        popEnterTransition = { EnterTransition.None },
+        popExitTransition  = { ExitTransition.None }
+    ) {
         composable("main") { MainScreen(navController, dao) }
         composable(
             "app_detail/{packageName}",
             arguments = listOf(navArgument("packageName") { type = NavType.StringType })
         ) { back ->
-            val pkg = back.arguments?.getString("packageName") ?: ""
-            AppDetailScreen(navController, dao, pkg)
+            AppDetailScreen(navController, dao, back.arguments?.getString("packageName") ?: "")
         }
     }
 }
@@ -84,17 +91,13 @@ fun MainScreen(navController: NavController, dao: AppDao) {
 
     val appConfigs by dao.getAllAppConfigs().collectAsState(initial = emptyList())
     val recentLogs by dao.getRecentLogs().collectAsState(initial = emptyList())
-
-    // Collect global blocked domains so History tab shows BLOCKED immediately after user blocks
-    val globalBlockedDomains by dao.getGlobalBlockedDomains().collectAsState(initial = emptyList())
-    val globalBlockedSet = remember(globalBlockedDomains) {
-        globalBlockedDomains.map { it.domain.lowercase() }.toSet()
-    }
+    val globalRules by dao.getGlobalRules().collectAsState(initial = emptyList())
 
     var installedApps by remember { mutableStateOf<List<ApplicationInfo>>(emptyList()) }
     var searchQuery by remember { mutableStateOf("") }
     var selectedTab by remember { mutableIntStateOf(0) }
     var showClearLogsDialog by remember { mutableStateOf(false) }
+    var showAddGlobalRuleDialog by remember { mutableStateOf(false) }
 
     val notifLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
     val vpnLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
@@ -112,19 +115,17 @@ fun MainScreen(navController: NavController, dao: AppDao) {
             .sortedBy { pm.getApplicationLabel(it).toString() }
     }
 
-    // Set of packages that have filtering on — re-derived whenever configs change
     val enabledPackages = remember(appConfigs) {
         appConfigs.filter { it.isFilteringEnabled }.map { it.packageName }.toSet()
     }
 
-    // Enabled apps float to the top; both lists re-sort when configs or search changes
+    // Enabled apps float to the top
     val filteredApps = remember(installedApps, searchQuery, enabledPackages) {
         val pm = context.packageManager
         val base = if (searchQuery.isBlank()) installedApps
         else installedApps.filter { app ->
             val label = pm.getApplicationLabel(app).toString()
-            label.contains(searchQuery, ignoreCase = true) ||
-                    app.packageName.contains(searchQuery, ignoreCase = true)
+            label.contains(searchQuery, ignoreCase = true) || app.packageName.contains(searchQuery, ignoreCase = true)
         }
         base.sortedWith(
             compareByDescending<ApplicationInfo> { it.packageName in enabledPackages }
@@ -144,9 +145,15 @@ fun MainScreen(navController: NavController, dao: AppDao) {
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
                 ) { Text("Clear") }
             },
-            dismissButton = {
-                OutlinedButton(onClick = { showClearLogsDialog = false }) { Text("Cancel") }
-            }
+            dismissButton = { OutlinedButton(onClick = { showClearLogsDialog = false }) { Text("Cancel") } }
+        )
+    }
+
+    if (showAddGlobalRuleDialog) {
+        AddRuleDialog(
+            title = "Add Global Rule",
+            onDismiss = { showAddGlobalRuleDialog = false },
+            onAdd = { rule -> scope.launch { dao.insertRule(rule.copy(packageName = null)) } }
         )
     }
 
@@ -167,19 +174,32 @@ fun MainScreen(navController: NavController, dao: AppDao) {
                     selected = selectedTab == 1, onClick = { selectedTab = 1 },
                     label = { Text("History") }, icon = { Icon(Icons.Default.List, null) }
                 )
+                NavigationBarItem(
+                    selected = selectedTab == 2, onClick = { selectedTab = 2 },
+                    label = {
+                        BadgedBox(badge = {
+                            if (globalRules.isNotEmpty()) Badge { Text("${globalRules.size}") }
+                        }) { Text("Rules") }
+                    },
+                    icon = { Icon(Icons.Default.Lock, null) }
+                )
             }
         },
         floatingActionButton = {
-            AnimatedVisibility(
-                visible = selectedTab == 1 && recentLogs.isNotEmpty(),
-                enter = scaleIn() + fadeIn(), exit = scaleOut() + fadeOut()
-            ) {
-                FloatingActionButton(
-                    onClick = { showClearLogsDialog = true },
-                    containerColor = MaterialTheme.colorScheme.errorContainer
+            when (selectedTab) {
+                1 -> AnimatedVisibility(
+                    visible = recentLogs.isNotEmpty(),
+                    enter = scaleIn() + fadeIn(), exit = scaleOut() + fadeOut()
                 ) {
-                    Icon(Icons.Default.Delete, "Clear logs", tint = MaterialTheme.colorScheme.onErrorContainer)
+                    FloatingActionButton(
+                        onClick = { showClearLogsDialog = true },
+                        containerColor = MaterialTheme.colorScheme.errorContainer
+                    ) { Icon(Icons.Default.Delete, "Clear logs", tint = MaterialTheme.colorScheme.onErrorContainer) }
                 }
+                2 -> FloatingActionButton(onClick = { showAddGlobalRuleDialog = true }) {
+                    Icon(Icons.Default.Add, "Add global rule")
+                }
+                else -> {}
             }
         }
     ) { padding ->
@@ -190,38 +210,41 @@ fun MainScreen(navController: NavController, dao: AppDao) {
                     if (intent != null) vpnLauncher.launch(intent)
                     else context.startService(Intent(context, VpnTrackerService::class.java))
                 },
-                onStop = { context.stopService(Intent(context, VpnTrackerService::class.java)) }
+                // Send STOP action — onStartCommand calls stopForeground()+stopSelf()
+                // which triggers onDestroy() which closes the VPN fd to unblock the packet thread
+                onStop = {
+                    context.startService(
+                        Intent(context, VpnTrackerService::class.java).apply { action = "STOP" }
+                    )
+                }
             )
 
-            if (selectedTab == 0) {
-                OutlinedTextField(
-                    value = searchQuery,
-                    onValueChange = { searchQuery = it },
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-                    placeholder = { Text("Search apps…") },
-                    leadingIcon = { Icon(Icons.Default.Search, null) },
-                    trailingIcon = {
-                        if (searchQuery.isNotEmpty())
-                            IconButton(onClick = { searchQuery = "" }) { Icon(Icons.Default.Clear, "Clear") }
-                    },
-                    shape = RoundedCornerShape(12.dp),
-                    singleLine = true
-                )
-                LazyColumn(Modifier.weight(1f)) {
-                    if (filteredApps.isEmpty()) {
-                        item { EmptyState(Icons.Default.Search, "No apps match \"$searchQuery\".") }
-                    } else {
-                        items(filteredApps, key = { it.packageName }) { app ->
-                            val config = appConfigs.find { it.packageName == app.packageName }
-                            AppListItem(app, config) {
-                                navController.navigate("app_detail/${app.packageName}")
+            when (selectedTab) {
+                0 -> {
+                    OutlinedTextField(
+                        value = searchQuery, onValueChange = { searchQuery = it },
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                        placeholder = { Text("Search apps…") },
+                        leadingIcon = { Icon(Icons.Default.Search, null) },
+                        trailingIcon = {
+                            if (searchQuery.isNotEmpty())
+                                IconButton(onClick = { searchQuery = "" }) { Icon(Icons.Default.Clear, "Clear") }
+                        },
+                        shape = RoundedCornerShape(12.dp), singleLine = true
+                    )
+                    LazyColumn(Modifier.weight(1f)) {
+                        if (filteredApps.isEmpty()) {
+                            item { EmptyState(Icons.Default.Search, "No apps match \"$searchQuery\".") }
+                        } else {
+                            items(filteredApps, key = { it.packageName }) { app ->
+                                val config = appConfigs.find { it.packageName == app.packageName }
+                                AppListItem(app, config) { navController.navigate("app_detail/${app.packageName}") }
                             }
                         }
                     }
                 }
-            } else {
-                // globalBlockedSet lets log rows flip to BLOCKED instantly after user taps BLOCK
-                GlobalLogList(recentLogs, globalBlockedSet, dao, scope)
+                1 -> GlobalLogList(recentLogs, globalRules, dao, scope)
+                2 -> GlobalRulesList(globalRules, dao, scope)
             }
         }
     }
@@ -232,27 +255,22 @@ fun MainScreen(navController: NavController, dao: AppDao) {
 @Composable
 fun FirewallStatusCard(onStart: () -> Unit, onStop: () -> Unit) {
     val isRunning by VpnTrackerService.isRunning.collectAsState()
-
     Card(
         modifier = Modifier.fillMaxWidth().padding(16.dp),
         colors = CardDefaults.cardColors(
-            containerColor = if (isRunning) MaterialTheme.colorScheme.primaryContainer
-            else MaterialTheme.colorScheme.surfaceVariant
+            containerColor = if (isRunning) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant
         ),
         shape = RoundedCornerShape(24.dp)
     ) {
         Row(Modifier.padding(20.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(
                 modifier = Modifier.size(48.dp).background(
-                    if (isRunning) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
-                    CircleShape
-                ),
-                contentAlignment = Alignment.Center
+                    if (isRunning) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline, CircleShape
+                ), contentAlignment = Alignment.Center
             ) {
                 Icon(
                     if (isRunning) Icons.Default.Lock else Icons.Default.LockOpen, null,
-                    tint = if (isRunning) MaterialTheme.colorScheme.onPrimary
-                    else MaterialTheme.colorScheme.onSurfaceVariant
+                    tint = if (isRunning) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
             Spacer(Modifier.width(16.dp))
@@ -260,20 +278,14 @@ fun FirewallStatusCard(onStart: () -> Unit, onStop: () -> Unit) {
                 Text("Firewall Engine", fontWeight = FontWeight.Bold, fontSize = 18.sp)
                 Text(
                     if (isRunning) "Active & Protecting" else "Engine Stopped",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                    fontSize = 14.sp
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f), fontSize = 14.sp
                 )
-                if (!isRunning) {
-                    Text(
-                        "Enable filtering on at least one app first.",
-                        color = MaterialTheme.colorScheme.error.copy(alpha = 0.8f),
-                        fontSize = 11.sp
-                    )
-                }
+                if (!isRunning)
+                    Text("Enable filtering on at least one app first.",
+                        color = MaterialTheme.colorScheme.error.copy(alpha = 0.8f), fontSize = 11.sp)
             }
             if (isRunning) {
-                Button(
-                    onClick = onStop,
+                Button(onClick = onStop,
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
                     shape = RoundedCornerShape(12.dp)
                 ) { Text("Stop") }
@@ -289,9 +301,7 @@ fun FirewallStatusCard(onStart: () -> Unit, onStop: () -> Unit) {
 @Composable
 fun AppListItem(app: ApplicationInfo, config: AppConfig?, onClick: () -> Unit) {
     val context = LocalContext.current
-    val label = remember(app.packageName) {
-        context.packageManager.getApplicationLabel(app).toString()
-    }
+    val label = remember(app.packageName) { context.packageManager.getApplicationLabel(app).toString() }
     ListItem(
         modifier = Modifier.clickable(onClick = onClick).padding(horizontal = 8.dp),
         headlineContent = { Text(label, fontWeight = FontWeight.SemiBold) },
@@ -300,10 +310,7 @@ fun AppListItem(app: ApplicationInfo, config: AppConfig?, onClick: () -> Unit) {
         trailingContent = {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (config?.isFilteringEnabled == true) {
-                    Icon(
-                        Icons.Default.CheckCircle, "Filtering active",
-                        tint = Color(0xFF4CAF50), modifier = Modifier.size(20.dp)
-                    )
+                    Icon(Icons.Default.CheckCircle, "Active", tint = Color(0xFF4CAF50), modifier = Modifier.size(20.dp))
                     Spacer(Modifier.width(8.dp))
                 }
                 Icon(Icons.Default.ChevronRight, null)
@@ -312,8 +319,6 @@ fun AppListItem(app: ApplicationInfo, config: AppConfig?, onClick: () -> Unit) {
     )
     HorizontalDivider(Modifier.padding(horizontal = 16.dp), thickness = 0.5.dp)
 }
-
-// ── App icon (real launcher icon) ─────────────────────────────────────────────
 
 @Composable
 fun AppIconImage(packageName: String, modifier: Modifier = Modifier) {
@@ -326,6 +331,89 @@ fun AppIconImage(packageName: String, modifier: Modifier = Modifier) {
         },
         modifier = modifier
     )
+}
+
+// ── Global rules list (main screen Rules tab) ─────────────────────────────────
+
+@Composable
+fun GlobalRulesList(rules: List<FilterRule>, dao: AppDao, scope: CoroutineScope) {
+    if (rules.isEmpty()) {
+        EmptyState(Icons.Default.Lock,
+            "No global rules yet.\n\nTap + to add rules that apply to all enabled apps.\n\nALLOW rules (whitelist) always take priority over BLOCK rules.")
+        return
+    }
+    val allowRules = rules.filter { it.action == RuleAction.ALLOW }
+    val blockRules = rules.filter { it.action == RuleAction.BLOCK }
+    LazyColumn {
+        if (allowRules.isNotEmpty()) {
+            item {
+                Text("WHITELIST — Always Allow",
+                    Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 4.dp),
+                    fontWeight = FontWeight.Bold, color = Color(0xFF2E7D32), fontSize = 12.sp)
+            }
+            items(allowRules, key = { it.id }) { rule ->
+                RuleItem(rule,
+                    onDelete = { scope.launch { dao.deleteRule(rule) } },
+                    onToggle = { scope.launch { dao.setRuleEnabled(rule.id, it) } })
+            }
+        }
+        if (blockRules.isNotEmpty()) {
+            item {
+                Text("BLOCKLIST",
+                    Modifier.padding(start = 16.dp, end = 16.dp, top = if (allowRules.isNotEmpty()) 16.dp else 12.dp, bottom = 4.dp),
+                    fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+            }
+            items(blockRules, key = { it.id }) { rule ->
+                RuleItem(rule,
+                    onDelete = { scope.launch { dao.deleteRule(rule) } },
+                    onToggle = { scope.launch { dao.setRuleEnabled(rule.id, it) } })
+            }
+        }
+    }
+}
+
+// ── Log lists ─────────────────────────────────────────────────────────────────
+
+@Composable
+fun GlobalLogList(logs: List<ConnectionLog>, globalRules: List<FilterRule>, dao: AppDao, scope: CoroutineScope) {
+    if (logs.isEmpty()) {
+        EmptyState(Icons.Default.List, "No DNS history yet.\nStart the firewall to begin monitoring.")
+        return
+    }
+    LazyColumn {
+        items(logs, key = { it.id }) { log ->
+            val effectivelyBlocked = remember(log.isBlocked, log.domain, globalRules) {
+                log.isBlocked || isEffectivelyBlocked(log.domain, globalRules)
+            }
+            LogItemExtended(log, effectivelyBlocked) {
+                scope.launch {
+                    // BLOCK from History → global SUBDOMAIN rule (covers domain + all subdomains)
+                    dao.insertRule(FilterRule(packageName = null, pattern = log.domain, matchType = MatchType.SUBDOMAIN, action = RuleAction.BLOCK))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun AppTrafficList(logs: List<ConnectionLog>, allRules: List<FilterRule>, packageName: String, dao: AppDao, scope: CoroutineScope) {
+    if (logs.isEmpty()) {
+        EmptyState(Icons.Default.Info, "No DNS activity yet.\nMake sure the firewall is running and this app is enabled.")
+        return
+    }
+    LazyColumn {
+        items(logs, key = { it.id }) { log ->
+            val effectivelyBlocked = remember(log.isBlocked, log.domain, allRules) {
+                log.isBlocked || isEffectivelyBlocked(log.domain, allRules)
+            }
+            LogItemExtended(log, effectivelyBlocked) {
+                scope.launch {
+                    // BLOCK from app DNS Activity → per-app SUBDOMAIN rule
+                    dao.insertRule(FilterRule(packageName = packageName, pattern = log.domain, matchType = MatchType.SUBDOMAIN, action = RuleAction.BLOCK))
+                }
+            }
+        }
+    }
 }
 
 // ── App detail screen ─────────────────────────────────────────────────────────
@@ -344,33 +432,19 @@ fun AppDetailScreen(navController: NavController, dao: AppDao, packageName: Stri
 
     val configs by dao.getAllAppConfigs().collectAsState(initial = emptyList())
     val appConfig = configs.find { it.packageName == packageName }
-
-    // Per-app blocked entries shown in the Blocked tab
-    val appBlockedDomains by dao.getBlockedDomainsForApp(packageName).collectAsState(initial = emptyList())
-    // Global blocked entries (packageName IS NULL in DB)
-    val globalBlockedDomains by dao.getGlobalBlockedDomains().collectAsState(initial = emptyList())
-
-    // Combined set: if a domain is in either list, log rows show BLOCKED immediately
-    val allBlockedSet = remember(appBlockedDomains, globalBlockedDomains) {
-        (appBlockedDomains + globalBlockedDomains).map { it.domain.lowercase() }.toSet()
-    }
-
-    // All DNS logs — per-app tracking isn't possible without UID inspection (root),
-    // so we show all intercepted DNS queries and let the user block per-app from here.
+    val appRules by dao.getAppRules(packageName).collectAsState(initial = emptyList())
+    val globalRules by dao.getGlobalRules().collectAsState(initial = emptyList())
     val allLogs by dao.getRecentLogs().collectAsState(initial = emptyList())
+    val combinedRules = remember(appRules, globalRules) { appRules + globalRules }
 
     var selectedSection by remember { mutableIntStateOf(0) }
-    var showAddDomainDialog by remember { mutableStateOf(false) }
+    var showAddRuleDialog by remember { mutableStateOf(false) }
 
-    if (showAddDomainDialog) {
-        AddDomainDialog(
-            title = "Block domain for $label",
-            onDismiss = { showAddDomainDialog = false },
-            onAdd = { domain ->
-                scope.launch {
-                    dao.insertBlockedDomain(BlockedDomain(packageName = packageName, domain = domain))
-                }
-            }
+    if (showAddRuleDialog) {
+        AddRuleDialog(
+            title = "Add Rule for $label",
+            onDismiss = { showAddRuleDialog = false },
+            onAdd = { rule -> scope.launch { dao.insertRule(rule.copy(packageName = packageName)) } }
         )
     }
 
@@ -379,20 +453,15 @@ fun AppDetailScreen(navController: NavController, dao: AppDao, packageName: Stri
             TopAppBar(
                 title = { Text(label, maxLines = 1) },
                 navigationIcon = {
-                    IconButton(onClick = { navController.popBackStack() }) {
-                        Icon(Icons.Default.ArrowBack, "Back")
-                    }
+                    IconButton(onClick = { navController.popBackStack() }) { Icon(Icons.Default.ArrowBack, "Back") }
                 },
                 actions = { AppIconImage(packageName, Modifier.size(32.dp)) }
             )
         },
         floatingActionButton = {
-            AnimatedVisibility(
-                visible = selectedSection == 1,
-                enter = scaleIn() + fadeIn(), exit = scaleOut() + fadeOut()
-            ) {
-                FloatingActionButton(onClick = { showAddDomainDialog = true }) {
-                    Icon(Icons.Default.Add, "Add blocked domain")
+            AnimatedVisibility(visible = selectedSection == 1, enter = scaleIn() + fadeIn(), exit = scaleOut() + fadeOut()) {
+                FloatingActionButton(onClick = { showAddRuleDialog = true }) {
+                    Icon(Icons.Default.Add, "Add rule")
                 }
             }
         }
@@ -403,8 +472,7 @@ fun AppDetailScreen(navController: NavController, dao: AppDao, packageName: Stri
                     Column(Modifier.weight(1f)) {
                         Text("Enable Firewall", fontWeight = FontWeight.Bold)
                         Text(
-                            if (appConfig?.isFilteringEnabled == true) "DNS filtering active"
-                            else "App bypasses firewall",
+                            if (appConfig?.isFilteringEnabled == true) "DNS filtering active" else "App bypasses firewall",
                             fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
@@ -418,88 +486,64 @@ fun AppDetailScreen(navController: NavController, dao: AppDao, packageName: Stri
             }
 
             TabRow(selectedTabIndex = selectedSection) {
+                Tab(selected = selectedSection == 0, onClick = { selectedSection = 0 }, text = { Text("DNS Activity") })
                 Tab(
-                    selected = selectedSection == 0,
-                    onClick = { selectedSection = 0 },
-                    text = { Text("DNS Activity") }
-                )
-                Tab(
-                    selected = selectedSection == 1,
-                    onClick = { selectedSection = 1 },
+                    selected = selectedSection == 1, onClick = { selectedSection = 1 },
                     text = {
-                        BadgedBox(
-                            badge = {
-                                if (appBlockedDomains.isNotEmpty())
-                                    Badge { Text("${appBlockedDomains.size}") }
-                            }
-                        ) { Text("Blocked") }
+                        BadgedBox(badge = {
+                            if (appRules.isNotEmpty()) Badge { Text("${appRules.size}") }
+                        }) { Text("App Rules") }
                     }
                 )
             }
 
             if (selectedSection == 0) {
-                // allBlockedSet → rows immediately show BLOCKED when user taps BLOCK
-                // packageName  → BLOCK button creates a per-app rule, not a global one
-                AppTrafficList(allLogs, allBlockedSet, packageName, dao, scope)
+                AppTrafficList(allLogs, combinedRules, packageName, dao, scope)
             } else {
-                BlockedDomainsList(appBlockedDomains, dao, scope)
+                AppRulesList(appRules, label, globalRules.size, dao, scope)
             }
         }
     }
 }
 
-// ── Blocked domains list ──────────────────────────────────────────────────────
+// ── App rules list ────────────────────────────────────────────────────────────
 
 @Composable
-fun BlockedDomainsList(domains: List<BlockedDomain>, dao: AppDao, scope: CoroutineScope) {
-    if (domains.isEmpty()) {
-        EmptyState(
-            Icons.Default.Lock,
-            "No domains blocked for this app.\nTap + to add one, or tap BLOCK on any DNS Activity row."
-        )
-    } else {
-        LazyColumn {
-            items(domains, key = { it.id }) { domain ->
-                ListItem(
-                    headlineContent = { Text(domain.domain, fontWeight = FontWeight.Medium) },
-                    leadingContent = {
-                        Icon(Icons.Default.Close, null,
-                            tint = MaterialTheme.colorScheme.error,
-                            modifier = Modifier.size(20.dp))
-                    },
-                    trailingContent = {
-                        IconButton(onClick = { scope.launch { dao.deleteBlockedDomain(domain) } }) {
-                            Icon(Icons.Default.Delete, "Remove", tint = MaterialTheme.colorScheme.error)
-                        }
+fun AppRulesList(rules: List<FilterRule>, appLabel: String, globalRuleCount: Int, dao: AppDao, scope: CoroutineScope) {
+    val allowRules = rules.filter { it.action == RuleAction.ALLOW }
+    val blockRules = rules.filter { it.action == RuleAction.BLOCK }
+
+    Column(Modifier.fillMaxSize()) {
+        if (globalRuleCount > 0) {
+            Card(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
+            ) {
+                Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Info, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSecondaryContainer)
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        "$globalRuleCount global rule${if (globalRuleCount != 1) "s" else ""} also apply to this app. Manage them in the Rules tab.",
+                        fontSize = 12.sp, color = MaterialTheme.colorScheme.onSecondaryContainer
+                    )
+                }
+            }
+        }
+
+        if (rules.isEmpty()) {
+            EmptyState(Icons.Default.Lock, "No app-specific rules for $appLabel.\nTap + to add, or tap BLOCK in DNS Activity.")
+        } else {
+            LazyColumn(Modifier.weight(1f)) {
+                if (allowRules.isNotEmpty()) {
+                    item { Text("WHITELIST", Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 4.dp), fontWeight = FontWeight.Bold, color = Color(0xFF2E7D32), fontSize = 12.sp) }
+                    items(allowRules, key = { it.id }) { rule ->
+                        RuleItem(rule, onDelete = { scope.launch { dao.deleteRule(rule) } }, onToggle = { scope.launch { dao.setRuleEnabled(rule.id, it) } })
                     }
-                )
-                HorizontalDivider(Modifier.padding(horizontal = 16.dp), thickness = 0.5.dp)
-            }
-        }
-    }
-}
-
-// ── Traffic / log lists ───────────────────────────────────────────────────────
-
-@Composable
-fun AppTrafficList(
-    logs: List<ConnectionLog>,
-    currentlyBlockedDomains: Set<String>,   // live set — row flips to BLOCKED immediately
-    packageName: String,                     // BLOCK creates a per-app rule for this package
-    dao: AppDao,
-    scope: CoroutineScope
-) {
-    if (logs.isEmpty()) {
-        EmptyState(
-            Icons.Default.Info,
-            "No DNS activity yet.\nMake sure the firewall is running and this app is enabled."
-        )
-    } else {
-        LazyColumn {
-            items(logs, key = { it.id }) { log ->
-                LogItemExtended(log, currentlyBlockedDomains) {
-                    scope.launch {
-                        dao.insertBlockedDomain(BlockedDomain(packageName = packageName, domain = log.domain))
+                }
+                if (blockRules.isNotEmpty()) {
+                    item { Text("BLOCKLIST", Modifier.padding(start = 16.dp, end = 16.dp, top = if (allowRules.isNotEmpty()) 16.dp else 12.dp, bottom = 4.dp), fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.error, fontSize = 12.sp) }
+                    items(blockRules, key = { it.id }) { rule ->
+                        RuleItem(rule, onDelete = { scope.launch { dao.deleteRule(rule) } }, onToggle = { scope.launch { dao.setRuleEnabled(rule.id, it) } })
                     }
                 }
             }
@@ -507,30 +551,44 @@ fun AppTrafficList(
     }
 }
 
+// ── Rule item ─────────────────────────────────────────────────────────────────
+
 @Composable
-fun GlobalLogList(
-    logs: List<ConnectionLog>,
-    currentlyBlockedDomains: Set<String>,   // live global block set
-    dao: AppDao,
-    scope: CoroutineScope
-) {
-    if (logs.isEmpty()) {
-        EmptyState(
-            Icons.Default.List,
-            "No DNS history yet.\nStart the firewall to begin monitoring."
-        )
-    } else {
-        LazyColumn {
-            items(logs, key = { it.id }) { log ->
-                LogItemExtended(log, currentlyBlockedDomains) {
-                    scope.launch {
-                        // History tab blocks globally (null packageName = affects all enabled apps)
-                        dao.insertBlockedDomain(BlockedDomain(packageName = null, domain = log.domain))
-                    }
+fun RuleItem(rule: FilterRule, onDelete: () -> Unit, onToggle: (Boolean) -> Unit) {
+    val isBlock = rule.action == RuleAction.BLOCK
+    val actionColor = if (isBlock) MaterialTheme.colorScheme.error else Color(0xFF2E7D32)
+
+    ListItem(
+        modifier = Modifier.alpha(if (rule.isEnabled) 1f else 0.45f),
+        headlineContent = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Surface(color = actionColor.copy(alpha = 0.15f), shape = RoundedCornerShape(4.dp)) {
+                    Text(
+                        rule.matchType.displayName().uppercase(),
+                        Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                        color = actionColor, fontWeight = FontWeight.Bold, fontSize = 9.sp
+                    )
+                }
+                Spacer(Modifier.width(8.dp))
+                Text(rule.pattern, fontWeight = FontWeight.Medium)
+            }
+        },
+        supportingContent = {
+            Text(
+                "${if (isBlock) "Block" else "Allow"} · ${rule.matchType.description()}",
+                fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        },
+        trailingContent = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Switch(checked = rule.isEnabled, onCheckedChange = onToggle)
+                IconButton(onClick = onDelete) {
+                    Icon(Icons.Default.Delete, "Delete", tint = MaterialTheme.colorScheme.error)
                 }
             }
         }
-    }
+    )
+    HorizontalDivider(Modifier.padding(horizontal = 16.dp), thickness = 0.5.dp)
 }
 
 // ── Log item ──────────────────────────────────────────────────────────────────
@@ -538,36 +596,20 @@ fun GlobalLogList(
 private val logDateFormat = SimpleDateFormat("MMM d, HH:mm:ss", Locale.getDefault())
 
 @Composable
-fun LogItemExtended(
-    log: ConnectionLog,
-    currentlyBlockedDomains: Set<String> = emptySet(),
-    onBlock: () -> Unit
-) {
-    // Show BLOCKED if the VPN blocked it at intercept time, OR if user has since added it to a block list
-    val isEffectivelyBlocked = log.isBlocked || log.domain.lowercase() in currentlyBlockedDomains
-
+fun LogItemExtended(log: ConnectionLog, isEffectivelyBlocked: Boolean, onBlock: () -> Unit) {
     ListItem(
         headlineContent = { Text(log.domain, fontWeight = FontWeight.Medium) },
         supportingContent = {
             Text(
                 remember(log.timestamp) { logDateFormat.format(Date(log.timestamp)) },
-                fontSize = 11.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
             )
         },
         trailingContent = {
             if (isEffectivelyBlocked) {
-                Surface(
-                    color = MaterialTheme.colorScheme.errorContainer,
-                    shape = RoundedCornerShape(8.dp)
-                ) {
-                    Text(
-                        "BLOCKED",
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                        color = MaterialTheme.colorScheme.onErrorContainer,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 10.sp
-                    )
+                Surface(color = MaterialTheme.colorScheme.errorContainer, shape = RoundedCornerShape(8.dp)) {
+                    Text("BLOCKED", Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                        color = MaterialTheme.colorScheme.onErrorContainer, fontWeight = FontWeight.Bold, fontSize = 10.sp)
                 }
             } else {
                 TextButton(onClick = onBlock) { Text("BLOCK") }
@@ -577,32 +619,87 @@ fun LogItemExtended(
     HorizontalDivider(Modifier.padding(horizontal = 16.dp), thickness = 0.5.dp)
 }
 
-// ── Add domain dialog ─────────────────────────────────────────────────────────
+// ── Add rule dialog ───────────────────────────────────────────────────────────
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AddDomainDialog(title: String = "Block Domain", onDismiss: () -> Unit, onAdd: (String) -> Unit) {
-    var text by remember { mutableStateOf("") }
-    val trimmed = text.trim().lowercase()
+fun AddRuleDialog(title: String, onDismiss: () -> Unit, onAdd: (FilterRule) -> Unit) {
+    var pattern by remember { mutableStateOf("") }
+    var matchType by remember { mutableStateOf(MatchType.SUBDOMAIN) }
+    var action by remember { mutableStateOf(RuleAction.BLOCK) }
+    var menuExpanded by remember { mutableStateOf(false) }
+    val trimmed = pattern.trim().lowercase()
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        icon = { Icon(Icons.Default.Close, null) },
         title = { Text(title) },
         text = {
-            OutlinedTextField(
-                value = text,
-                onValueChange = { text = it },
-                label = { Text("Domain") },
-                placeholder = { Text("example.com") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth()
-            )
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                // Block / Allow toggle
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(
+                        onClick = { action = RuleAction.BLOCK }, modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            containerColor = if (action == RuleAction.BLOCK) MaterialTheme.colorScheme.errorContainer else Color.Transparent
+                        )
+                    ) {
+                        Text("Block",
+                            color = if (action == RuleAction.BLOCK) MaterialTheme.colorScheme.onErrorContainer
+                            else MaterialTheme.colorScheme.onSurface)
+                    }
+                    OutlinedButton(
+                        onClick = { action = RuleAction.ALLOW }, modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            containerColor = if (action == RuleAction.ALLOW) Color(0xFF1B5E20) else Color.Transparent
+                        )
+                    ) {
+                        Text("Allow",
+                            color = if (action == RuleAction.ALLOW) Color.White else MaterialTheme.colorScheme.onSurface)
+                    }
+                }
+
+                OutlinedTextField(
+                    value = pattern, onValueChange = { pattern = it },
+                    label = { Text("Pattern") },
+                    placeholder = { Text("e.g. example.com  or  ads  or  .ru") },
+                    singleLine = true, modifier = Modifier.fillMaxWidth()
+                )
+
+                // Match type dropdown
+                ExposedDropdownMenuBox(expanded = menuExpanded, onExpandedChange = { menuExpanded = it }) {
+                    OutlinedTextField(
+                        value = "${matchType.displayName()} — ${matchType.description()}",
+                        onValueChange = {}, readOnly = true, label = { Text("Match Type") },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(menuExpanded) },
+                        modifier = Modifier.menuAnchor().fillMaxWidth()
+                    )
+                    ExposedDropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+                        MatchType.values().forEach { type ->
+                            DropdownMenuItem(
+                                text = {
+                                    Column {
+                                        Text(type.displayName(), fontWeight = FontWeight.Medium)
+                                        Text(type.description(), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                },
+                                onClick = { matchType = type; menuExpanded = false }
+                            )
+                        }
+                    }
+                }
+            }
         },
         confirmButton = {
             Button(
-                onClick = { onAdd(trimmed); onDismiss() },
-                enabled = trimmed.isNotBlank() && trimmed.contains('.')
-            ) { Text("Block") }
+                onClick = {
+                    onAdd(FilterRule(packageName = null, pattern = trimmed, matchType = matchType, action = action))
+                    onDismiss()
+                },
+                enabled = trimmed.isNotBlank(),
+                colors = if (action == RuleAction.BLOCK)
+                    ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                else ButtonDefaults.buttonColors(containerColor = Color(0xFF2E7D32))
+            ) { Text(if (action == RuleAction.BLOCK) "Block" else "Allow") }
         },
         dismissButton = { OutlinedButton(onClick = onDismiss) { Text("Cancel") } }
     )
@@ -614,15 +711,11 @@ fun AddDomainDialog(title: String = "Block Domain", onDismiss: () -> Unit, onAdd
 fun EmptyState(icon: androidx.compose.ui.graphics.vector.ImageVector, message: String) {
     Column(
         modifier = Modifier.fillMaxSize().padding(40.dp),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally
+        verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Icon(icon, null, modifier = Modifier.size(72.dp), tint = MaterialTheme.colorScheme.outline.copy(alpha = 0.25f))
+        Icon(icon, null, Modifier.size(72.dp), tint = MaterialTheme.colorScheme.outline.copy(alpha = 0.25f))
         Spacer(Modifier.height(20.dp))
-        Text(
-            message, textAlign = TextAlign.Center,
-            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
-            fontSize = 14.sp, lineHeight = 20.sp
-        )
+        Text(message, textAlign = TextAlign.Center,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f), fontSize = 14.sp, lineHeight = 20.sp)
     }
 }

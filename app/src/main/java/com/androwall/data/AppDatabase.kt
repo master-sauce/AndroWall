@@ -4,41 +4,44 @@ import android.content.Context
 import androidx.room.*
 import kotlinx.coroutines.flow.Flow
 
+class Converters {
+    @TypeConverter fun matchTypeToString(v: MatchType): String = v.name
+    @TypeConverter fun stringToMatchType(v: String): MatchType = MatchType.valueOf(v)
+    @TypeConverter fun ruleActionToString(v: RuleAction): String = v.name
+    @TypeConverter fun stringToRuleAction(v: String): RuleAction = RuleAction.valueOf(v)
+}
+
 @Dao
 interface AppDao {
+    // ── App configs ──────────────────────────────────────────────────────────
     @Query("SELECT * FROM app_configs ORDER BY appName ASC")
     fun getAllAppConfigs(): Flow<List<AppConfig>>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAppConfig(config: AppConfig)
 
-    // Returns app-specific AND global blocks for a given package
-    @Query("SELECT * FROM blocked_domains WHERE packageName = :packageName OR packageName IS NULL")
-    fun getBlockedDomains(packageName: String?): Flow<List<BlockedDomain>>
+    // ── Filter rules ─────────────────────────────────────────────────────────
+    @Query("SELECT * FROM filter_rules ORDER BY action ASC, pattern ASC")
+    fun getAllRules(): Flow<List<FilterRule>>
 
-    // Only the per-app entries (shown in AppDetailScreen)
-    @Query("SELECT * FROM blocked_domains WHERE packageName = :packageName")
-    fun getBlockedDomainsForApp(packageName: String): Flow<List<BlockedDomain>>
+    @Query("SELECT * FROM filter_rules WHERE packageName IS NULL ORDER BY action ASC, pattern ASC")
+    fun getGlobalRules(): Flow<List<FilterRule>>
 
-    // Only globally-blocked entries (packageName IS NULL)
-    @Query("SELECT * FROM blocked_domains WHERE packageName IS NULL")
-    fun getGlobalBlockedDomains(): Flow<List<BlockedDomain>>
-
-    // ALL blocked domains — used by the VPN service cache
-    @Query("SELECT * FROM blocked_domains")
-    fun getAllBlockedDomains(): Flow<List<BlockedDomain>>
+    @Query("SELECT * FROM filter_rules WHERE packageName = :pkg ORDER BY action ASC, pattern ASC")
+    fun getAppRules(pkg: String): Flow<List<FilterRule>>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insertBlockedDomain(domain: BlockedDomain)
+    suspend fun insertRule(rule: FilterRule)
 
     @Delete
-    suspend fun deleteBlockedDomain(domain: BlockedDomain)
+    suspend fun deleteRule(rule: FilterRule)
 
+    @Query("UPDATE filter_rules SET isEnabled = :enabled WHERE id = :id")
+    suspend fun setRuleEnabled(id: Int, enabled: Boolean)
+
+    // ── Connection logs ──────────────────────────────────────────────────────
     @Query("SELECT * FROM connection_logs ORDER BY timestamp DESC LIMIT 200")
     fun getRecentLogs(): Flow<List<ConnectionLog>>
-
-    @Query("SELECT * FROM connection_logs WHERE packageName = :packageName ORDER BY timestamp DESC LIMIT 50")
-    fun getLogsForApp(packageName: String): Flow<List<ConnectionLog>>
 
     @Insert
     suspend fun insertLog(log: ConnectionLog)
@@ -47,23 +50,21 @@ interface AppDao {
     suspend fun clearLogs()
 }
 
+@TypeConverters(Converters::class)
 @Database(
-    entities = [AppConfig::class, BlockedDomain::class, ConnectionLog::class],
-    version = 1
+    entities = [AppConfig::class, FilterRule::class, ConnectionLog::class],
+    version = 2  // bumped — fallbackToDestructiveMigration wipes old data on schema change
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun appDao(): AppDao
 
     companion object {
         @Volatile private var INSTANCE: AppDatabase? = null
-
         fun getDatabase(context: Context): AppDatabase =
             INSTANCE ?: synchronized(this) {
-                Room.databaseBuilder(
-                    context.applicationContext,
-                    AppDatabase::class.java,
-                    "androwall_db"
-                ).build().also { INSTANCE = it }
+                Room.databaseBuilder(context.applicationContext, AppDatabase::class.java, "androwall_db")
+                    .fallbackToDestructiveMigration()
+                    .build().also { INSTANCE = it }
             }
     }
 }
