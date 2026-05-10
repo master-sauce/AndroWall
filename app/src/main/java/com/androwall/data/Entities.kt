@@ -1,4 +1,4 @@
-package com.dvora.androwall.data
+package com.androwall.data
 
 import androidx.room.Entity
 import androidx.room.PrimaryKey

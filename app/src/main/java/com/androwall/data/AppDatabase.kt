@@ -1,4 +1,4 @@
-package com.dvora.androwall.data
+package com.androwall.data
 
 import android.content.Context
 import androidx.room.*

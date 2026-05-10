@@ -1,4 +1,4 @@
-package com.dvora.androwall.ui.theme
+package com.androwall.ui.theme
 
 import android.app.Activity
 import android.os.Build

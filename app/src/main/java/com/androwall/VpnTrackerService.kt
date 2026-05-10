@@ -1,4 +1,4 @@
-package com.dvora.androwall
+package com.androwall
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -9,8 +9,8 @@ import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.util.Log
 import androidx.core.app.NotificationCompat
-import com.dvora.androwall.data.AppDatabase
-import com.dvora.androwall.data.ConnectionLog
+import com.androwall.data.AppDatabase
+import com.androwall.data.ConnectionLog
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow

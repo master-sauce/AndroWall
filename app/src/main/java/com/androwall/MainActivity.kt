@@ -1,4 +1,4 @@
-package com.dvora.androwall
+package com.androwall
 
 import android.Manifest
 import android.app.Activity
@@ -39,8 +39,8 @@ import androidx.navigation.NavController
 import androidx.navigation.NavType
 import androidx.navigation.compose.*
 import androidx.navigation.navArgument
-import com.dvora.androwall.data.*
-import com.dvora.androwall.ui.theme.AndroWallTheme
+import com.androwall.data.*
+import com.androwall.ui.theme.AndroWallTheme
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat

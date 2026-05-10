@@ -1,4 +1,4 @@
-package com.dvora.androwall.ui.theme
+package com.androwall.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
