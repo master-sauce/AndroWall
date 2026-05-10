@@ -11,19 +11,22 @@ data class AppConfig(
 )
 
 enum class MatchType {
-    EXACT,      // "ads.com"  → only "ads.com"
-    SUBDOMAIN,  // "ads.com"  → "ads.com" and "evil.ads.com"
-    PREFIX,     // "ads"      → "ads.example.com", "ads-tracker.net"
-    SUFFIX,     // ".ru"      → "evil.ru", "bad.ru"
-    CONTAINS    // "tracker"  → "ad-tracker.com", "analytics.tracker.net"
+    EXACT,      // "ads.com"   → only "ads.com"
+    SUBDOMAIN,  // "ads.com"   → "ads.com" and any subdomain
+    PREFIX,     // "ads"       → "ads.example.com"
+    SUFFIX,     // ".ru"       → "evil.ru"
+    CONTAINS    // "tracker"   → "ad-tracker.com"
 }
 
 enum class RuleAction { BLOCK, ALLOW }
 
+/** BLACKLIST = block matched, allow rest.  WHITELIST = allow matched, block rest. */
+enum class FilterMode { BLACKLIST, WHITELIST }
+
 @Entity(tableName = "filter_rules")
 data class FilterRule(
     @PrimaryKey(autoGenerate = true) val id: Int = 0,
-    val packageName: String?,       // null = applies globally to all enabled apps
+    val packageName: String?,
     val pattern: String,
     val matchType: MatchType = MatchType.SUBDOMAIN,
     val action: RuleAction = RuleAction.BLOCK,

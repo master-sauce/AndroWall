@@ -1,13 +1,34 @@
 package com.androwall.data
 
-/** ALLOW rules always win over BLOCK rules (whitelist-first). */
-fun isEffectivelyBlocked(domain: String, rules: List<FilterRule>): Boolean {
+/**
+ * BLACKLIST mode: allow everything except BLOCK-matched domains.
+ *                 ALLOW rules act as whitelist exceptions inside that.
+ * WHITELIST mode: block everything except ALLOW-matched domains.
+ *                 BLOCK rules can further restrict allowed domains.
+ */
+fun isEffectivelyBlocked(
+    domain: String,
+    rules: List<FilterRule>,
+    mode: FilterMode = FilterMode.BLACKLIST
+): Boolean {
     val lower = domain.lowercase()
     val active = rules.filter { it.isEnabled }
-    if (active.filter { it.action == RuleAction.ALLOW }
-            .any { ruleMatches(lower, it.pattern.lowercase(), it.matchType) }) return false
-    return active.filter { it.action == RuleAction.BLOCK }
-        .any { ruleMatches(lower, it.pattern.lowercase(), it.matchType) }
+    val allowRules = active.filter { it.action == RuleAction.ALLOW }
+    val blockRules  = active.filter { it.action == RuleAction.BLOCK }
+
+    val hasAllowMatch = allowRules.any { ruleMatches(lower, it.pattern.lowercase(), it.matchType) }
+    val hasBlockMatch  = blockRules.any  { ruleMatches(lower, it.pattern.lowercase(), it.matchType) }
+
+    return when (mode) {
+        FilterMode.BLACKLIST -> {
+            if (hasAllowMatch) false          // explicit ALLOW beats any BLOCK rule
+            else hasBlockMatch
+        }
+        FilterMode.WHITELIST -> {
+            if (hasBlockMatch) true           // explicit BLOCK beats any ALLOW rule
+            else !hasAllowMatch               // block everything not in the allow list
+        }
+    }
 }
 
 fun ruleMatches(domain: String, pattern: String, type: MatchType): Boolean = when (type) {
@@ -27,9 +48,9 @@ fun MatchType.displayName() = when (this) {
 }
 
 fun MatchType.description() = when (this) {
-    MatchType.EXACT     -> "Exact domain match only"
-    MatchType.SUBDOMAIN -> "Domain and all its subdomains"
-    MatchType.PREFIX    -> "Domains starting with pattern"
-    MatchType.SUFFIX    -> "Domains ending with pattern"
-    MatchType.CONTAINS  -> "Domains containing pattern"
+    MatchType.EXACT     -> "Exact domain only"
+    MatchType.SUBDOMAIN -> "Domain + all subdomains"
+    MatchType.PREFIX    -> "Domains starting with…"
+    MatchType.SUFFIX    -> "Domains ending with…"
+    MatchType.CONTAINS  -> "Domains containing…"
 }

@@ -3,17 +3,14 @@ package com.androwall
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.content.Context
 import android.content.Intent
 import android.net.VpnService
 import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.util.Log
 import androidx.core.app.NotificationCompat
-import com.androwall.data.AppDatabase
-import com.androwall.data.ConnectionLog
-import com.androwall.data.FilterRule
-import com.androwall.data.RuleAction
-import com.androwall.data.ruleMatches
+import com.androwall.data.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -35,7 +32,6 @@ class VpnTrackerService : VpnService(), Runnable {
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val writeMutex = Mutex()
 
-    /** Reactively-updated rule cache. Written from a coroutine, read lock-free from VPN thread. */
     @Volatile private var cachedRules: List<FilterRule> = emptyList()
 
     companion object {
@@ -43,9 +39,31 @@ class VpnTrackerService : VpnService(), Runnable {
         private const val CHANNEL_ID = "vpn_channel"
         private const val DNS_SERVER = "8.8.8.8"
         private const val DNS_PORT = 53
+        const val PREFS_NAME = "androwall_prefs"
+        const val KEY_FILTER_MODE = "filter_mode"
+        private const val KEY_USER_STOPPED = "user_stopped"
 
         private val _isRunning = MutableStateFlow(false)
         val isRunning: StateFlow<Boolean> = _isRunning
+
+        // Reactive filter mode — observed by all composables via collectAsState()
+        private val _filterMode = MutableStateFlow(FilterMode.BLACKLIST)
+        val filterMode: StateFlow<FilterMode> = _filterMode
+
+        /** Called from UI to change the mode. Persists to SharedPreferences. */
+        fun setFilterMode(context: Context, mode: FilterMode) {
+            _filterMode.value = mode
+            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit().putString(KEY_FILTER_MODE, mode.name).apply()
+        }
+
+        /** Load persisted mode at app start. Call once from AndroWallApp. */
+        fun loadPersistedMode(context: Context) {
+            val stored = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .getString(KEY_FILTER_MODE, FilterMode.BLACKLIST.name)
+            _filterMode.value = runCatching { FilterMode.valueOf(stored ?: "") }
+                .getOrDefault(FilterMode.BLACKLIST)
+        }
     }
 
     // ── Lifecycle ─────────────────────────────────────────────────────────────
@@ -56,11 +74,30 @@ class VpnTrackerService : VpnService(), Runnable {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+
+        // ── STOP action ───────────────────────────────────────────────────────
         if (intent?.action == "STOP") {
+            // Set false FIRST so the UI updates immediately, before stopSelf() is even processed
+            _isRunning.value = false
+            prefs.edit().putBoolean(KEY_USER_STOPPED, true).apply()
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
             return START_NOT_STICKY
         }
+
+        // ── Android auto-restart (null intent + START_STICKY) ─────────────────
+        // If the user deliberately stopped the service, don't let Android restart it
+        if (intent == null && prefs.getBoolean(KEY_USER_STOPPED, false)) {
+            Log.d(TAG, "Suppressing Android restart — user stopped the service")
+            stopSelf()
+            return START_NOT_STICKY
+        }
+
+        // ── Normal start ──────────────────────────────────────────────────────
+        prefs.edit().putBoolean(KEY_USER_STOPPED, false).apply()
+        // Sync filter mode from prefs into the companion StateFlow
+        loadPersistedMode(this)
 
         startForeground(1, createNotification())
 
@@ -68,7 +105,9 @@ class VpnTrackerService : VpnService(), Runnable {
         serviceScope.launch {
             db.appDao().getAllRules().collect { rules ->
                 cachedRules = rules.filter { it.isEnabled }
-                Log.d(TAG, "Rule cache: ${cachedRules.size} active rules (${cachedRules.count { it.action == RuleAction.BLOCK }} block, ${cachedRules.count { it.action == RuleAction.ALLOW }} allow)")
+                Log.d(TAG, "Rules cache: ${cachedRules.size} active " +
+                        "(${cachedRules.count { it.action == RuleAction.BLOCK }} block, " +
+                        "${cachedRules.count { it.action == RuleAction.ALLOW }} allow)")
             }
         }
 
@@ -81,15 +120,16 @@ class VpnTrackerService : VpnService(), Runnable {
 
     override fun onDestroy() {
         serviceScope.cancel()
-        // ↓ Close the fd FIRST — this throws IOException in fis.read(), unblocking the VPN thread.
-        // Thread.interrupt() alone does NOT unblock native blocking file reads on Android.
+        // Close fd first — unblocks fis.read() on the VPN thread immediately
         runCatching { vpnInterface?.close() }
         vpnInterface = null
         vpnThread?.interrupt()
-        _isRunning.value = false
+        _isRunning.value = false   // Redundant if STOP path was taken, but safe
         vpnThread = null
         super.onDestroy()
     }
+
+    // ── Notification ──────────────────────────────────────────────────────────
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -127,33 +167,28 @@ class VpnTrackerService : VpnService(), Runnable {
     private fun setupVpn(): Boolean {
         val db = AppDatabase.getDatabase(this)
         val configs = runBlocking { db.appDao().getAllAppConfigs().first() }
-        val enabledApps = configs.filter { it.isFilteringEnabled }
-        if (enabledApps.isEmpty()) return false
+        val enabled = configs.filter { it.isFilteringEnabled }
+        if (enabled.isEmpty()) return false
 
         val builder = Builder()
             .setSession("AndroWall")
             .addAddress("10.0.0.2", 32)
             .addDnsServer(DNS_SERVER)
-            .addRoute(DNS_SERVER, 32)   // only DNS-server traffic enters the tunnel
-            .setBlocking(true)          // blocking read — no busy loop
+            .addRoute(DNS_SERVER, 32)
+            .setBlocking(true)
 
-        enabledApps.forEach { cfg ->
+        enabled.forEach { cfg ->
             try { builder.addAllowedApplication(cfg.packageName) }
-            catch (e: Exception) { Log.w(TAG, "Skipped unknown package: ${cfg.packageName}") }
+            catch (e: Exception) { Log.w(TAG, "Skipped: ${cfg.packageName}") }
         }
 
         vpnInterface = builder.establish()
-        Log.d(TAG, "VPN established=${vpnInterface != null}, apps=${enabledApps.size}")
+        Log.d(TAG, "VPN established=${vpnInterface != null}, apps=${enabled.size}")
         return vpnInterface != null
     }
 
     // ── Packet loop ───────────────────────────────────────────────────────────
 
-    /**
-     * Reads packets on the VPN thread (blocking). Each packet is immediately
-     * copied and dispatched to a Dispatchers.IO coroutine so slow upstream
-     * DNS responses never block the read of subsequent packets.
-     */
     private fun processPackets() {
         val fis = FileInputStream(vpnInterface!!.fileDescriptor)
         val fos = FileOutputStream(vpnInterface!!.fileDescriptor)
@@ -168,7 +203,6 @@ class VpnTrackerService : VpnService(), Runnable {
                 val packet = readBuf.copyOf(len)
                 serviceScope.launch { handlePacket(packet, fos, db) }
             } catch (e: Exception) {
-                // IOException is expected when onDestroy() closes the fd
                 Log.d(TAG, "Packet loop ending: ${e.message}")
                 break
             }
@@ -179,7 +213,7 @@ class VpnTrackerService : VpnService(), Runnable {
     private suspend fun handlePacket(raw: ByteArray, fos: FileOutputStream, db: AppDatabase) {
         val info = parseDnsFromPacket(raw, raw.size) ?: return
         val blocked = isDomainBlocked(info.domain)
-        Log.d(TAG, "DNS ${info.domain} → ${if (blocked) "BLOCKED" else "allow"}")
+        Log.d(TAG, "DNS ${info.domain} → ${if (blocked) "BLOCK [${_filterMode.value}]" else "allow"}")
         logConnection(db, info.domain, blocked)
 
         val dnsResponse = if (blocked) buildNxdomain(info.dnsPayload)
@@ -192,6 +226,11 @@ class VpnTrackerService : VpnService(), Runnable {
         )
         writeMutex.withLock { fos.write(ipPacket) }
     }
+
+    // ── Rule matching — uses companion StateFlow for live mode updates ─────────
+
+    private fun isDomainBlocked(domain: String): Boolean =
+        isEffectivelyBlocked(domain, cachedRules, _filterMode.value)
 
     // ── DNS parsing ───────────────────────────────────────────────────────────
 
@@ -216,7 +255,7 @@ class VpnTrackerService : VpnService(), Runnable {
         val dstPort    = pkt.short.toInt() and 0xFFFF
         if (dstPort != DNS_PORT) return null
         val udpDataLen = (pkt.short.toInt() and 0xFFFF) - 8
-        pkt.short   // skip UDP checksum
+        pkt.short
         if (udpDataLen < 12) return null
 
         val dnsPayload = ByteArray(udpDataLen).also { pkt.get(it) }
@@ -239,23 +278,11 @@ class VpnTrackerService : VpnService(), Runnable {
         }.getOrDefault("")
     }
 
-    // ── Rule matching ─────────────────────────────────────────────────────────
-
-    private fun isDomainBlocked(domain: String): Boolean {
-        val lower = domain.lowercase()
-        val active = cachedRules
-        // ALLOW (whitelist) always takes priority
-        if (active.filter { it.action == RuleAction.ALLOW }
-                .any { ruleMatches(lower, it.pattern.lowercase(), it.matchType) }) return false
-        return active.filter { it.action == RuleAction.BLOCK }
-            .any { ruleMatches(lower, it.pattern.lowercase(), it.matchType) }
-    }
-
     // ── DNS forwarding ────────────────────────────────────────────────────────
 
     private fun forwardDns(payload: ByteArray): ByteArray? = runCatching {
         DatagramSocket().use { sock ->
-            protect(sock)   // ← bypass the tunnel — critical to prevent infinite loop
+            protect(sock)
             sock.soTimeout = 3000
             sock.send(DatagramPacket(payload, payload.size, InetAddress.getByName(DNS_SERVER), DNS_PORT))
             val resp = ByteArray(4096); val pkt = DatagramPacket(resp, resp.size)
@@ -266,8 +293,8 @@ class VpnTrackerService : VpnService(), Runnable {
     private fun buildNxdomain(query: ByteArray): ByteArray {
         val r = query.copyOf()
         if (r.size >= 4) {
-            r[2] = (r[2].toInt() or 0x80).toByte()             // QR=1 (response)
-            r[3] = ((r[3].toInt() and 0xF0) or 0x03).toByte()  // RCODE=3 (NXDOMAIN)
+            r[2] = (r[2].toInt() or 0x80).toByte()
+            r[3] = ((r[3].toInt() and 0xF0) or 0x03).toByte()
         }
         return r
     }
