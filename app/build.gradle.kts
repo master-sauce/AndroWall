@@ -6,11 +6,11 @@ plugins {
 }
 
 android {
-    namespace = "com.dvora.androwall"
+    namespace = "com.androwall"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.dvora.androwall"
+        applicationId = "com.androwall"
         minSdk = 24
         targetSdk = 36
         versionCode = 1
