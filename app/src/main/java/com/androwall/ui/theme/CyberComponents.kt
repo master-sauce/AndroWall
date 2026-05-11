@@ -12,7 +12,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -29,136 +28,182 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 
-// ── Neon border / background modifiers ───────────────────────────────────────
+// ── Modifier helpers ──────────────────────────────────────────────────────────
 
-fun Modifier.neonBorder(
-    color: Color = NeonCyan,
+fun Modifier.emberBorder(
+    color: Color = PhoenixFlame,
     width: Dp = 1.dp,
     cutCorner: Dp = 10.dp
-): Modifier = this.border(width, color.copy(0.6f), CutCornerShape(topStart = cutCorner, bottomEnd = cutCorner))
+): Modifier = this.border(
+    width, color.copy(0.6f),
+    CutCornerShape(topStart = cutCorner, bottomEnd = cutCorner)
+)
 
-fun Modifier.cyberBackground(
-    base: Color = CyberNavy,
+fun Modifier.emberBackground(
+    base: Color = AshNavy,
     cutCorner: Dp = 10.dp
-): Modifier = this.background(base, CutCornerShape(topStart = cutCorner, bottomEnd = cutCorner))
+): Modifier = this.background(
+    base,
+    CutCornerShape(topStart = cutCorner, bottomEnd = cutCorner)
+)
 
-// ── Animated scan line ────────────────────────────────────────────────────────
+// ── Flame shimmer line (phoenix rising) ───────────────────────────────────────
+// Travels bottom → top, like heat haze or an ember rising off coals.
 
 @Composable
-fun ScanLineOverlay(modifier: Modifier = Modifier, color: Color = NeonCyan) {
-    val inf = rememberInfiniteTransition(label = "scan")
+fun FlameLineOverlay(modifier: Modifier = Modifier, color: Color = PhoenixFlame) {
+    val inf = rememberInfiniteTransition(label = "flame")
     val y by inf.animateFloat(
-        0f, 1f,
-        infiniteRepeatable(tween(2400, easing = LinearEasing), RepeatMode.Restart),
-        label = "scanY"
+        initialValue = 1f, targetValue = 0f,
+        animationSpec = infiniteRepeatable(tween(3200, easing = LinearEasing), RepeatMode.Restart),
+        label = "flameY"
     )
     Canvas(modifier) {
         val yPx = size.height * y
         drawLine(
-            Brush.horizontalGradient(listOf(Color.Transparent, color.copy(0.15f), color.copy(0.4f), color.copy(0.15f), Color.Transparent)),
-            Offset(0f, yPx), Offset(size.width, yPx), 2.dp.toPx(), StrokeCap.Round
+            Brush.horizontalGradient(listOf(
+                Color.Transparent, color.copy(0.06f), color.copy(0.32f),
+                color.copy(0.48f), color.copy(0.32f), color.copy(0.06f), Color.Transparent
+            )),
+            Offset(0f, yPx), Offset(size.width, yPx), 3.dp.toPx(), StrokeCap.Round
         )
+        // Secondary heat haze ahead of the primary shimmer
         drawLine(
-            Brush.horizontalGradient(listOf(Color.Transparent, color.copy(0.05f), color.copy(0.1f), color.copy(0.05f), Color.Transparent)),
-            Offset(0f, yPx + 6.dp.toPx()), Offset(size.width, yPx + 6.dp.toPx()), 1.dp.toPx()
+            Brush.horizontalGradient(listOf(
+                Color.Transparent, color.copy(0.03f), color.copy(0.10f),
+                color.copy(0.03f), Color.Transparent
+            )),
+            Offset(0f, yPx - 9.dp.toPx()), Offset(size.width, yPx - 9.dp.toPx()), 1.dp.toPx()
         )
     }
 }
 
-// ── Grid background ───────────────────────────────────────────────────────────
+// ── Ember particle grid ───────────────────────────────────────────────────────
+// Fine grid at very low opacity — like a glow pattern cast by embers.
 
 @Composable
-fun CyberGrid(modifier: Modifier = Modifier, color: Color = NeonCyan, cellSize: Dp = 28.dp) {
+fun EmberGrid(modifier: Modifier = Modifier, color: Color = PhoenixFlame, cellSize: Dp = 28.dp) {
     Canvas(modifier) {
-        val a = 0.04f; val c = cellSize.toPx()
-        var x = 0f; while (x <= size.width)  { drawLine(color.copy(a), Offset(x, 0f), Offset(x, size.height), 0.5.dp.toPx()); x += c }
-        var y = 0f; while (y <= size.height) { drawLine(color.copy(a), Offset(0f, y), Offset(size.width, y), 0.5.dp.toPx()); y += c }
+        val alpha = 0.032f
+        val c = cellSize.toPx()
+        var x = 0f
+        while (x <= size.width) {
+            drawLine(color.copy(alpha), Offset(x, 0f), Offset(x, size.height), 0.5.dp.toPx())
+            x += c
+        }
+        var y = 0f
+        while (y <= size.height) {
+            drawLine(color.copy(alpha), Offset(0f, y), Offset(size.width, y), 0.5.dp.toPx())
+            y += c
+        }
     }
 }
 
-// ── Pulsing dot ───────────────────────────────────────────────────────────────
+// ── Pulsing ember dot ─────────────────────────────────────────────────────────
 
 @Composable
 fun PulsingDot(color: Color, size: Dp = 10.dp, modifier: Modifier = Modifier) {
-    val inf = rememberInfiniteTransition(label = "pulse")
-    val scale by inf.animateFloat(0.7f, 1.3f, infiniteRepeatable(tween(900, easing = FastOutSlowInEasing), RepeatMode.Reverse), "scale")
-    val alpha by inf.animateFloat(0.4f, 1f,   infiniteRepeatable(tween(900, easing = FastOutSlowInEasing), RepeatMode.Reverse), "alpha")
+    val inf = rememberInfiniteTransition(label = "ember")
+    val scale by inf.animateFloat(
+        0.6f, 1.4f,
+        infiniteRepeatable(tween(1100, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        "emberScale"
+    )
+    val alpha by inf.animateFloat(
+        0.3f, 1f,
+        infiniteRepeatable(tween(1100, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        "emberAlpha"
+    )
     Canvas(modifier.size(size)) {
-        drawCircle(color.copy(0.15f * alpha), (size.toPx() / 2) * scale * 1.8f)
-        drawCircle(color.copy(alpha),         (size.toPx() / 2) * scale * 0.7f)
+        val r = size.toPx() / 2
+        drawCircle(color.copy(0.10f * alpha), r * scale * 2.4f) // outer halo
+        drawCircle(color.copy(0.22f * alpha), r * scale * 1.5f) // mid glow
+        drawCircle(color.copy(alpha),          r * scale * 0.65f) // hot core
     }
 }
 
 // ── Section header ────────────────────────────────────────────────────────────
 
 @Composable
-fun CyberSectionHeader(text: String, color: Color = NeonCyan, modifier: Modifier = Modifier) {
+fun PhoenixSectionHeader(text: String, color: Color = PhoenixFlame, modifier: Modifier = Modifier) {
     Column(modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 6.dp)) {
-        Text(text, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold,
-            fontSize = 10.sp, letterSpacing = 2.sp, color = color)
+        Text(
+            text,
+            fontFamily    = FontFamily.Monospace,
+            fontWeight    = FontWeight.Bold,
+            fontSize      = 10.sp,
+            letterSpacing = 2.sp,
+            color         = color
+        )
         Spacer(Modifier.height(4.dp))
-        Box(Modifier.fillMaxWidth().height(1.dp).background(
-            Brush.horizontalGradient(listOf(color.copy(0.8f), color.copy(0.2f), Color.Transparent))))
+        Box(
+            Modifier.fillMaxWidth().height(1.dp).background(
+                Brush.horizontalGradient(
+                    listOf(color.copy(0.9f), color.copy(0.3f), Color.Transparent)
+                )
+            )
+        )
     }
 }
 
-// ── Neon chip ─────────────────────────────────────────────────────────────────
+// ── Ember chip ────────────────────────────────────────────────────────────────
 
 @Composable
-fun NeonChip(text: String, color: Color, modifier: Modifier = Modifier) {
+fun EmberChip(text: String, color: Color, modifier: Modifier = Modifier) {
     Box(
         modifier
-            .background(color.copy(0.1f), CyberShapeChip)
-            .border(0.5.dp, color.copy(0.7f), CyberShapeChip)
+            .background(color.copy(0.12f), PhoenixShapeChip)
+            .border(0.5.dp, color.copy(0.75f), PhoenixShapeChip)
             .padding(horizontal = 8.dp, vertical = 3.dp)
     ) {
-        Text(text, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold,
-            fontSize = 9.sp, letterSpacing = 1.5.sp, color = color)
+        Text(
+            text,
+            fontFamily    = FontFamily.Monospace,
+            fontWeight    = FontWeight.Bold,
+            fontSize      = 9.sp,
+            letterSpacing = 1.5.sp,
+            color         = color
+        )
     }
 }
 
-// ── Card toast (floating error card) ─────────────────────────────────────────
+// ── Fire toast card ───────────────────────────────────────────────────────────
 //
 //  Usage:
-//    Box { ... ; CyberToastCard(message, visible, onDismiss, Modifier.align(Alignment.TopCenter)) }
+//    Box { ..content.. ; FireToastCard(msg, visible, onDismiss, Modifier.align(Alignment.TopCenter)) }
 //
-//  Auto-dismisses after 4 seconds. Manual dismiss via ✕ button.
+//  Auto-dismisses after 4 s. ✕ dismisses immediately.
 // ─────────────────────────────────────────────────────────────────────────────
 
 @Composable
-fun CyberToastCard(
+fun FireToastCard(
     message: String,
     visible: Boolean,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
-    color: Color = NeonRed
+    color: Color = EmberRed
 ) {
-    // Auto-dismiss timer — cancels automatically if visible flips to false before 4 s
     LaunchedEffect(visible) {
-        if (visible) {
-            delay(4_000L)
-            onDismiss()
-        }
+        if (visible) { delay(4_000L); onDismiss() }
     }
 
     AnimatedVisibility(
         visible  = visible,
         modifier = modifier,
-        enter = slideInVertically(tween(300, easing = FastOutSlowInEasing)) { -it } + fadeIn(tween(300)),
-        exit  = slideOutVertically(tween(220, easing = FastOutSlowInEasing)) { -it } + fadeOut(tween(220))
+        enter = slideInVertically(tween(280, easing = FastOutSlowInEasing)) { -it } + fadeIn(tween(280)),
+        exit  = slideOutVertically(tween(220, easing = FastOutSlowInEasing)) { -it } + fadeOut(tween(200))
     ) {
         Box(
             Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 14.dp)
-                .background(CyberDeep, CyberShapeMedium)
-                .border(1.dp, color.copy(0.85f), CyberShapeMedium)
-                .clip(CyberShapeMedium)
+                .background(AshDeep, PhoenixShapeMedium)
+                .border(1.dp, color.copy(0.9f), PhoenixShapeMedium)
+                .clip(PhoenixShapeMedium)
         ) {
-            // Subtle grid overlay
-            CyberGrid(Modifier.matchParentSize(), color = color, cellSize = 18.dp)
+            EmberGrid(Modifier.matchParentSize(), color = color, cellSize = 20.dp)
 
-            // Top neon glow strip
+            // Top flame glow strip
             Box(
                 Modifier
                     .fillMaxWidth()
@@ -166,7 +211,7 @@ fun CyberToastCard(
                     .align(Alignment.TopStart)
                     .background(
                         Brush.horizontalGradient(
-                            listOf(color.copy(1f), color.copy(0.5f), Color.Transparent)
+                            listOf(color, color.copy(0.6f), color.copy(0.1f), Color.Transparent)
                         )
                     )
             )
@@ -175,23 +220,21 @@ fun CyberToastCard(
                 Modifier.padding(horizontal = 14.dp, vertical = 13.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Icon box
                 Box(
                     Modifier
                         .size(34.dp)
-                        .background(color.copy(0.12f), CyberShapeSmall)
-                        .border(0.5.dp, color.copy(0.55f), CyberShapeSmall),
+                        .background(color.copy(0.14f), PhoenixShapeSmall)
+                        .border(0.5.dp, color.copy(0.6f), PhoenixShapeSmall),
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(Icons.Default.Warning, null, tint = color, modifier = Modifier.size(17.dp))
+                    Icon(Icons.Default.Warning, null, tint = color, modifier = Modifier.size(18.dp))
                 }
 
                 Spacer(Modifier.width(12.dp))
 
-                // Text block
                 Column(Modifier.weight(1f)) {
                     Text(
-                        "SYSTEM  ERROR",
+                        "SHIELD  ALERT",
                         fontFamily    = FontFamily.Monospace,
                         fontWeight    = FontWeight.Black,
                         fontSize      = 9.sp,
@@ -211,12 +254,11 @@ fun CyberToastCard(
 
                 Spacer(Modifier.width(10.dp))
 
-                // Dismiss button
                 Box(
                     Modifier
                         .size(26.dp)
-                        .background(color.copy(0.1f), CyberShapeChip)
-                        .border(0.5.dp, color.copy(0.45f), CyberShapeChip)
+                        .background(color.copy(0.1f), PhoenixShapeChip)
+                        .border(0.5.dp, color.copy(0.45f), PhoenixShapeChip)
                         .clickable(onClick = onDismiss),
                     contentAlignment = Alignment.Center
                 ) {

@@ -2,35 +2,44 @@ package com.androwall.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-// ── Deep backgrounds ──────────────────────────────────────────────────────────
-val CyberVoid       = Color(0xFF020509)
-val CyberBlack      = Color(0xFF060C14)
-val CyberDeep       = Color(0xFF08111E)
-val CyberNavy       = Color(0xFF0C1826)
-val CyberSlate      = Color(0xFF111E30)
+// ── Material baseline (kept for legacy compat) ────────────────────────────────
+val Purple80     = Color(0xFFD0BCFF)
+val PurpleGrey80 = Color(0xFFCCC2DC)
+val Pink80       = Color(0xFFEFB8C8)
+val Purple40     = Color(0xFF6650a4)
+val PurpleGrey40 = Color(0xFF625b71)
+val Pink40       = Color(0xFF7D5260)
 
-// ── Neon primaries ────────────────────────────────────────────────────────────
-val NeonCyan        = Color(0xFF00CFFF)
-val NeonCyanDim     = Color(0xFF007A99)
-val NeonGreen       = Color(0xFF00FF88)
-val NeonGreenDim    = Color(0xFF007744)
-val NeonRed         = Color(0xFFFF2055)
-val NeonRedDim      = Color(0xFF880022)
-val NeonPurple      = Color(0xFFBD00FF)
-val NeonAmber       = Color(0xFFFFB800)
+// ── Ash backgrounds (darkest → lightest) ──────────────────────────────────────
+val AshBlack  = Color(0xFF0D0B09)   // root scaffold — ash bed
+val AshDeep   = Color(0xFF140E06)   // top-bar / bottom-bar / dialogs
+val AshNavy   = Color(0xFF1C1510)   // card / surface background
+val AshSlate  = Color(0xFF261B12)   // secondary card / icon containers
+val VoidBlack = Color(0xFF000000)   // pure black — switch thumb etc
 
-// ── Ghost (semi-transparent) backgrounds ─────────────────────────────────────
-val NeonCyanGhost   = Color(0x1A00CFFF)   // ~10% opacity
-val NeonGreenGhost  = Color(0x1A00FF88)
-val NeonRedGhost    = Color(0x1AFF2055)
-val NeonPurpleGhost = Color(0x1ABD00FF)
+// ── Phoenix Flame — primary brand / action ────────────────────────────────────
+val PhoenixFlame      = Color(0xFFFF6B2B)   // vivid fire orange
+val PhoenixFlameDim   = Color(0xFFCC4500)   // deeper burnt orange
+val PhoenixFlameGhost = Color(0x18FF6B2B)   // ~9 % — nav indicator / ghost fills
 
-// ── Text hierarchy ────────────────────────────────────────────────────────────
-val CyberTextPrimary   = Color(0xFFCCE8FF)
-val CyberTextSecondary = Color(0xFF4D7A99)
-val CyberTextTertiary  = Color(0xFF253B4D)
+// ── Ember Amber — "allow" / active / positive ─────────────────────────────────
+val EmberAmber      = Color(0xFFFFAB00)   // molten amber / gold
+val EmberAmberGhost = Color(0x18FFAB00)   // ~9 %
 
-// ── Structural lines ──────────────────────────────────────────────────────────
-val CyberBorderFaint  = Color(0xFF0A1828)
-val CyberBorderMid    = Color(0xFF162840)
-val CyberBorderBright = Color(0xFF005577)
+// ── Ember Red — "block" / danger / error ──────────────────────────────────────
+val EmberRed      = Color(0xFFFF3D00)   // deep fire red
+val EmberRedGhost = Color(0x18FF3D00)   // ~9 %
+
+// ── Phoenix Gold — tertiary accent / info ─────────────────────────────────────
+val PhoenixGold      = Color(0xFFFFD600)   // molten gold
+val PhoenixGoldGhost = Color(0x18FFD600)   // ~9 %
+
+// ── Text tones ────────────────────────────────────────────────────────────────
+val AshTextPrimary   = Color(0xFFFFF5E6)   // warm cream — near-white
+val AshTextSecondary = Color(0xFF8C7B6B)   // warm grey-brown
+val AshTextTertiary  = Color(0xFF4D3D30)   // deep warm brown — subtle hints
+
+// ── Border / divider tones ────────────────────────────────────────────────────
+val EmberBorderFaint  = Color(0xFF26180C)
+val EmberBorderMid    = Color(0xFF3D2B18)
+val EmberBorderBright = Color(0xFF5C4022)

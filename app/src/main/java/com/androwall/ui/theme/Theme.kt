@@ -4,44 +4,43 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 
-private val CyberColorScheme = darkColorScheme(
-    primary              = NeonCyan,
-    onPrimary            = CyberVoid,
-    primaryContainer     = NeonCyanGhost,
-    onPrimaryContainer   = NeonCyan,
-    secondary            = NeonGreen,
-    onSecondary          = CyberVoid,
-    secondaryContainer   = NeonGreenGhost,
-    onSecondaryContainer = NeonGreen,
-    tertiary             = NeonPurple,
-    onTertiary           = CyberVoid,
-    tertiaryContainer    = NeonPurpleGhost,
-    onTertiaryContainer  = NeonPurple,
-    error                = NeonRed,
-    onError              = CyberVoid,
-    errorContainer       = NeonRedGhost,
-    onErrorContainer     = NeonRed,
-    background           = CyberBlack,
-    onBackground         = CyberTextPrimary,
-    surface              = CyberDeep,
-    onSurface            = CyberTextPrimary,
-    surfaceVariant       = CyberNavy,
-    onSurfaceVariant     = CyberTextSecondary,
-    outline              = CyberBorderMid,
-    outlineVariant       = CyberBorderFaint,
-    inverseSurface       = CyberTextPrimary,
-    inverseOnSurface     = CyberVoid,
-    inversePrimary       = NeonCyanDim,
-    scrim                = CyberVoid
+private val PhoenixColorScheme = darkColorScheme(
+    primary              = PhoenixFlame,
+    onPrimary            = VoidBlack,
+    primaryContainer     = PhoenixFlameGhost,
+    onPrimaryContainer   = PhoenixFlame,
+    secondary            = EmberAmber,
+    onSecondary          = VoidBlack,
+    secondaryContainer   = EmberAmberGhost,
+    onSecondaryContainer = EmberAmber,
+    tertiary             = PhoenixGold,
+    onTertiary           = VoidBlack,
+    tertiaryContainer    = PhoenixGoldGhost,
+    onTertiaryContainer  = PhoenixGold,
+    error                = EmberRed,
+    onError              = VoidBlack,
+    errorContainer       = EmberRedGhost,
+    onErrorContainer     = EmberRed,
+    background           = AshBlack,
+    onBackground         = AshTextPrimary,
+    surface              = AshDeep,
+    onSurface            = AshTextPrimary,
+    surfaceVariant       = AshNavy,
+    onSurfaceVariant     = AshTextSecondary,
+    outline              = EmberBorderMid,
+    outlineVariant       = EmberBorderFaint,
+    inverseSurface       = AshTextPrimary,
+    inverseOnSurface     = VoidBlack,
+    inversePrimary       = PhoenixFlameDim,
+    scrim                = VoidBlack
 )
 
 @Composable
 fun AndroWallTheme(content: @Composable () -> Unit) {
-    // Always dark — no dynamic color, no light mode
     MaterialTheme(
-        colorScheme = CyberColorScheme,
-        typography  = CyberTypography,
-        shapes      = CyberShapes,
+        colorScheme = PhoenixColorScheme,
+        typography  = PhoenixTypography,
+        shapes      = PhoenixShapes,
         content     = content
     )
 }
