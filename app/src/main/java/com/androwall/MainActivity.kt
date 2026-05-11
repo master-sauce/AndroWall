@@ -199,7 +199,7 @@ fun MainScreen(navController: NavController, dao: AppDao) {
                         color         = PhoenixFlame
                     )
                     Text(
-                        "PHOENIX SHIELD  //  DNS FIREWALL ENGINE",
+                        "NETWORK SHIELD  //  DNS FIREWALL ENGINE",
                         fontFamily    = FontFamily.Monospace,
                         fontWeight    = FontWeight.Normal,
                         fontSize      = 9.sp,
@@ -222,7 +222,7 @@ fun MainScreen(navController: NavController, dao: AppDao) {
                 NavigationBar(containerColor = Color.Transparent, tonalElevation = 0.dp) {
                     listOf(
                         Triple(0, Icons.Default.Home,  "APPS"),
-                        Triple(1, Icons.Default.List,  "HISTORY"),
+                        Triple(1, Icons.Default.List,  "LOGS"),
                         Triple(2, Icons.Default.Lock,  "RULES")
                     ).forEach { (idx, icon, label) ->
                         NavigationBarItem(
@@ -432,18 +432,18 @@ fun FirewallStatusCard(hasEnabledApps: Boolean, onStart: () -> Unit, onStop: () 
                 if (!isRunning) {
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        if (hasEnabledApps) "// phoenix shield ready — press START"
+                        if (hasEnabledApps) "// network shield ready — press START"
                         else                "// no apps enabled — go to APPS tab first",
                         fontFamily    = FontFamily.Monospace,
                         fontSize      = 9.sp,
                         letterSpacing = 0.5.sp,
-                        color         = if (hasEnabledApps) EmberAmber.copy(0.6f) else EmberRed.copy(0.7f)
+                        color         = if (hasEnabledApps) EmberGreen.copy(0.6f) else EmberRed.copy(0.7f)
                     )
                 }
             }
             Spacer(Modifier.width(12.dp))
             if (isRunning) PhoenixButton("STOP",  EmberRed,   onClick = onStop)
-            else           PhoenixButton("START", PhoenixFlame, onClick = onStart)
+            else           PhoenixButton("START", EmberGreen, onClick = onStart)
         }
     }
 }
@@ -466,7 +466,7 @@ fun AppListItem(app: ApplicationInfo, config: AppConfig?, onClick: () -> Unit) {
         Box(
             Modifier.width(3.dp).height(52.dp).background(
                 Brush.verticalGradient(
-                    if (isEnabled) listOf(PhoenixFlame, EmberAmber)
+                    if (isEnabled) listOf(PhoenixFlame, EmberGreen)
                     else           listOf(EmberBorderMid, EmberBorderFaint)
                 ),
                 CutCornerShape(2.dp)
@@ -548,7 +548,7 @@ fun FilterModeCard(currentMode: FilterMode, onModeChange: (FilterMode) -> Unit) 
             )
             Spacer(Modifier.height(10.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf(FilterMode.BLACKLIST to EmberRed, FilterMode.WHITELIST to EmberAmber).forEach { (mode, color) ->
+                listOf(FilterMode.BLACKLIST to EmberRed, FilterMode.WHITELIST to EmberGreen).forEach { (mode, color) ->
                     val selected = currentMode == mode
                     Box(
                         Modifier
@@ -622,7 +622,7 @@ fun RulesListContent(rules: List<FilterRule>, dao: AppDao, scope: CoroutineScope
         val allow = rules.filter { it.action == RuleAction.ALLOW }
         val block  = rules.filter { it.action == RuleAction.BLOCK }
         if (allow.isNotEmpty()) {
-            item { PhoenixSectionHeader("// ALLOW — WHITELIST", EmberAmber) }
+            item { PhoenixSectionHeader("// ALLOW — WHITELIST", EmberGreen) }
             items(allow, key = { it.id }) { rule ->
                 RuleItem(rule,
                     onDelete = { scope.launch { dao.deleteRule(rule) } },
@@ -698,7 +698,7 @@ fun LogItemExtended(
 ) {
     val accentColor = when {
         isEffectivelyBlocked                -> EmberRed
-        filterMode == FilterMode.WHITELIST  -> EmberAmber
+        filterMode == FilterMode.WHITELIST  -> EmberGreen
         else                                -> EmberBorderMid
     }
     Row(
@@ -735,11 +735,11 @@ fun LogItemExtended(
         Spacer(Modifier.width(8.dp))
         when {
             isEffectivelyBlocked && filterMode == FilterMode.WHITELIST ->
-                EmberTextButton("ALLOW", EmberAmber, onAllow)
+                EmberTextButton("ALLOW", EmberGreen, onAllow)
             isEffectivelyBlocked ->
                 EmberChip("BLOCKED", EmberRed)
             filterMode == FilterMode.WHITELIST ->
-                EmberChip("ALLOWED", EmberAmber)
+                EmberChip("ALLOWED", EmberGreen)
             else ->
                 EmberTextButton("BLOCK", EmberRed, onBlock)
         }
@@ -751,7 +751,7 @@ fun LogItemExtended(
 
 @Composable
 fun RuleItem(rule: FilterRule, onDelete: () -> Unit, onToggle: (Boolean) -> Unit) {
-    val color = if (rule.action == RuleAction.BLOCK) EmberRed else EmberAmber
+    val color = if (rule.action == RuleAction.BLOCK) EmberRed else EmberGreen
     Row(
         Modifier
             .fillMaxWidth()
@@ -924,7 +924,7 @@ fun AppDetailScreen(navController: NavController, dao: AppDao, packageName: Stri
                     .background(AshNavy, PhoenixShapeMedium)
                     .border(
                         1.dp,
-                        if (appConfig?.isFilteringEnabled == true) EmberAmber.copy(0.4f) else EmberBorderMid,
+                        if (appConfig?.isFilteringEnabled == true) EmberGreen.copy(0.4f) else EmberBorderMid,
                         PhoenixShapeMedium
                     )
                     .padding(horizontal = 16.dp, vertical = 12.dp)
@@ -946,7 +946,7 @@ fun AppDetailScreen(navController: NavController, dao: AppDao, packageName: Stri
                             fontFamily = FontFamily.Monospace,
                             fontSize   = 9.sp,
                             color      = if (appConfig?.isFilteringEnabled == true)
-                                EmberAmber.copy(0.7f) else AshTextSecondary
+                                EmberGreen.copy(0.7f) else AshTextSecondary
                         )
                     }
                     Switch(
@@ -956,7 +956,7 @@ fun AppDetailScreen(navController: NavController, dao: AppDao, packageName: Stri
                         },
                         colors = SwitchDefaults.colors(
                             checkedThumbColor   = VoidBlack,
-                            checkedTrackColor   = EmberAmber.copy(0.8f),
+                            checkedTrackColor   = EmberGreen.copy(0.8f),
                             uncheckedThumbColor = AshTextTertiary,
                             uncheckedTrackColor = AshSlate
                         )
@@ -1052,7 +1052,7 @@ fun AppRulesList(rules: List<FilterRule>, appLabel: String, globalCount: Int, da
                 val allow = rules.filter { it.action == RuleAction.ALLOW }
                 val block  = rules.filter { it.action == RuleAction.BLOCK }
                 if (allow.isNotEmpty()) {
-                    item { PhoenixSectionHeader("// ALLOW", EmberAmber) }
+                    item { PhoenixSectionHeader("// ALLOW", EmberGreen) }
                     items(allow, key = { it.id }) { rule ->
                         RuleItem(rule,
                             onDelete = { scope.launch { dao.deleteRule(rule) } },
@@ -1106,7 +1106,7 @@ fun AddRuleDialog(
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 // BLOCK / ALLOW toggle
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf(RuleAction.BLOCK to EmberRed, RuleAction.ALLOW to EmberAmber).forEach { (a, color) ->
+                    listOf(RuleAction.BLOCK to EmberRed, RuleAction.ALLOW to EmberGreen).forEach { (a, color) ->
                         Box(
                             Modifier
                                 .weight(1f)
@@ -1192,7 +1192,7 @@ fun AddRuleDialog(
             }
         },
         confirmButton = {
-            val btnColor = if (action == RuleAction.BLOCK) EmberRed else EmberAmber
+            val btnColor = if (action == RuleAction.BLOCK) EmberRed else EmberGreen
             PhoenixButton(
                 action.name, btnColor,
                 enabled = trimmed.isNotBlank(),
