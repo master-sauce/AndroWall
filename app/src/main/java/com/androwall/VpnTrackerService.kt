@@ -32,27 +32,29 @@ class VpnTrackerService : VpnService() {
     private var vpnInterface: ParcelFileDescriptor? = null
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val writeMutex = Mutex()
-
-    /** Set to true after the first onStartCommand so we don't duplicate collectors. */
     private var initialized = false
 
-    /** Live rule cache — updated reactively from the DB, read lock-free by VPN thread. */
     @Volatile private var cachedRules: List<FilterRule> = emptyList()
 
     companion object {
-        private const val TAG          = "AndroWall"
-        private const val CHANNEL_ID   = "vpn_channel"
-        private const val NOTIF_ID     = 1
-        private const val DNS_SERVER   = "8.8.8.8"
-        private const val DNS_PORT     = 53
-        private const val PREFS_NAME   = "androwall_prefs"
-        private const val KEY_MODE     = "filter_mode"
+        private const val TAG        = "AndroWall"
+        private const val CHANNEL_ID = "vpn_channel"
+        private const val NOTIF_ID   = 1
+        private const val DNS_SERVER = "8.8.8.8"
+        private const val DNS_PORT   = 53
+        private const val PREFS_NAME = "androwall_prefs"
+        private const val KEY_MODE   = "filter_mode"
 
-        /** Send this action to toggle the VPN ON from the notification or app. */
+        // ── Intent actions ────────────────────────────────────────────────────
         const val ACTION_START_VPN = "com.androwall.ACTION_START_VPN"
-
-        /** Send this action to tear down the VPN tunnel (service stays alive in standby). */
         const val ACTION_STOP_VPN  = "com.androwall.ACTION_STOP_VPN"
+
+        /**
+         * Tears down the VPN tunnel, removes the notification, and stops the
+         * service process entirely. This is the only way to fully dismiss
+         * the notification — the user cannot swipe it away.
+         */
+        const val ACTION_CLOSE = "com.androwall.ACTION_CLOSE"
 
         // ── Shared observable state ───────────────────────────────────────────
         private val _isRunning  = MutableStateFlow(false)
@@ -83,18 +85,32 @@ class VpnTrackerService : VpnService() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
-            ACTION_STOP_VPN -> { stopVpn();  return START_STICKY }
-            ACTION_START_VPN -> { startVpn(); return START_STICKY }
+            ACTION_STOP_VPN -> {
+                stopVpn()
+                return START_STICKY
+            }
+            ACTION_START_VPN -> {
+                startVpn()
+                return START_STICKY
+            }
+            ACTION_CLOSE -> {
+                // 1. Tear down VPN tunnel
+                stopVpn()
+                // 2. Remove the persistent notification
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                // 3. Kill the service — nothing runs in the background after this
+                stopSelf()
+                return START_NOT_STICKY
+            }
         }
 
-        // ── First / normal start from the app ────────────────────────────────
+        // ── Normal start (from app UI or system restart) ──────────────────────
         if (!initialized) {
             initialized = true
-            // Post the standby notification immediately so we satisfy
-            // the foreground-service requirement before doing anything slow.
+            // Post standby notification immediately to satisfy foreground requirement
             startForeground(NOTIF_ID, buildNotification(running = false))
 
-            // Reactively keep the rule cache fresh
+            // Keep rule cache in sync reactively
             serviceScope.launch {
                 AppDatabase.getDatabase(this@VpnTrackerService)
                     .appDao().getAllRules().collect { rules ->
@@ -120,44 +136,36 @@ class VpnTrackerService : VpnService() {
 
     // ── VPN start / stop ──────────────────────────────────────────────────────
 
-    /**
-     * Establishes the VPN tunnel on a background thread.
-     * Does nothing if the tunnel is already active.
-     */
     private fun startVpn() {
-        if (vpnThread?.isAlive == true) return     // already running — no-op
+        if (vpnThread?.isAlive == true) return
 
-        val thread = Thread({
+        Thread({
             try {
                 if (setupVpn()) {
                     _isRunning.value = true
                     updateNotification(running = true)
-                    processPackets()                // blocks until interrupted
+                    processPackets()          // blocks until interrupted
                 } else {
-                    Log.w(TAG, "startVpn: no enabled apps or VPN establish failed")
+                    Log.w(TAG, "startVpn: no enabled apps or establish() returned null")
                     _isRunning.value = false
                     updateNotification(running = false)
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "VPN thread error", e)
             } finally {
-                // Thread exiting for any reason — go back to standby
                 _isRunning.value = false
                 runCatching { vpnInterface?.close() }
                 vpnInterface = null
                 vpnThread    = null
                 updateNotification(running = false)
             }
-        }, "VpnTrackerThread")
-
-        vpnThread = thread
-        thread.start()
+        }, "VpnTrackerThread").also { vpnThread = it }.start()
     }
 
     /**
-     * Tears down the tunnel but keeps the foreground service alive (standby).
-     * The notification switches to show a START button so the user can re-enable
-     * filtering without opening the app.
+     * Closes the TUN interface and stops the packet loop.
+     * The foreground service stays alive in standby — notification switches
+     * to show START so the user can re-enable without opening the app.
      */
     private fun stopVpn() {
         vpnThread?.interrupt()
@@ -166,7 +174,7 @@ class VpnTrackerService : VpnService() {
         vpnInterface     = null
         _isRunning.value = false
         updateNotification(running = false)
-        Log.d(TAG, "VPN tunnel closed — service in standby")
+        Log.d(TAG, "VPN tunnel closed — service now in standby")
     }
 
     // ── VPN setup ─────────────────────────────────────────────────────────────
@@ -186,7 +194,7 @@ class VpnTrackerService : VpnService() {
 
         enabled.forEach { cfg ->
             try { builder.addAllowedApplication(cfg.packageName) }
-            catch (e: Exception) { Log.w(TAG, "Skipped unknown pkg: ${cfg.packageName}") }
+            catch (e: Exception) { Log.w(TAG, "Skipped unknown package: ${cfg.packageName}") }
         }
 
         vpnInterface = builder.establish()
@@ -226,8 +234,8 @@ class VpnTrackerService : VpnService() {
         else forwardDns(info.dnsPayload) ?: return
 
         val reply = buildIpUdpPacket(
-            srcIp = info.dstIp, srcPort = DNS_PORT,
-            dstIp = info.srcIp, dstPort = info.srcPort,
+            srcIp   = info.dstIp, srcPort = DNS_PORT,
+            dstIp   = info.srcIp, dstPort = info.srcPort,
             payload = resp
         )
         writeMutex.withLock { fos.write(reply) }
@@ -257,7 +265,7 @@ class VpnTrackerService : VpnService() {
         val dstPort    = pkt.short.toInt() and 0xFFFF
         if (dstPort != DNS_PORT) return null
         val udpDataLen = (pkt.short.toInt() and 0xFFFF) - 8
-        pkt.short                                       // skip UDP checksum
+        pkt.short                                         // skip UDP checksum
         if (udpDataLen < 12) return null
 
         val dns    = ByteArray(udpDataLen).also { pkt.get(it) }
@@ -272,7 +280,8 @@ class VpnTrackerService : VpnService() {
             while (pos < dns.size) {
                 val l = dns[pos].toInt() and 0xFF
                 if (l == 0 || l and 0xC0 == 0xC0) break
-                pos++; repeat(l) { if (pos < dns.size) sb.append(dns[pos++].toInt().toChar()) }
+                pos++
+                repeat(l) { if (pos < dns.size) sb.append(dns[pos++].toInt().toChar()) }
                 sb.append('.')
             }
             sb.toString().trimEnd('.')
@@ -287,9 +296,9 @@ class VpnTrackerService : VpnService() {
             matchesDomain(lower, rule.pattern.lowercase(), rule.matchType)
         }
         return when {
-            match != null                     -> match.action == RuleAction.BLOCK
+            match != null                             -> match.action == RuleAction.BLOCK
             _filterMode.value == FilterMode.WHITELIST -> true   // default-deny
-            else                              -> false          // default-allow
+            else                                      -> false  // default-allow
         }
     }
 
@@ -305,7 +314,7 @@ class VpnTrackerService : VpnService() {
 
     private fun forwardDns(payload: ByteArray): ByteArray? = runCatching {
         DatagramSocket().use { sock ->
-            protect(sock)                   // bypass tunnel — avoids routing loop
+            protect(sock)           // bypass tunnel — prevents infinite routing loop
             sock.soTimeout = 3_000
             sock.send(DatagramPacket(payload, payload.size, InetAddress.getByName(DNS_SERVER), DNS_PORT))
             val resp = ByteArray(4096)
@@ -317,31 +326,39 @@ class VpnTrackerService : VpnService() {
 
     private fun buildNxdomain(q: ByteArray) = q.copyOf().also {
         if (it.size >= 4) {
-            it[2] = (it[2].toInt() or 0x80).toByte()              // QR = 1
-            it[3] = ((it[3].toInt() and 0xF0) or 0x03).toByte()   // RCODE = 3
+            it[2] = (it[2].toInt() or 0x80).toByte()              // QR = 1 (response)
+            it[3] = ((it[3].toInt() and 0xF0) or 0x03).toByte()   // RCODE = 3 (NXDOMAIN)
         }
     }
 
-    // ── IP/UDP packet builder ─────────────────────────────────────────────────
+    // ── IP / UDP packet builder ───────────────────────────────────────────────
 
     private fun buildIpUdpPacket(
-        srcIp: ByteArray, srcPort: Int, dstIp: ByteArray, dstPort: Int, payload: ByteArray
+        srcIp: ByteArray, srcPort: Int,
+        dstIp: ByteArray, dstPort: Int,
+        payload: ByteArray
     ): ByteArray {
-        val udpLen = 8 + payload.size; val ipLen = 20 + udpLen
+        val udpLen = 8 + payload.size
+        val ipLen  = 20 + udpLen
         val pkt = ByteBuffer.allocate(ipLen).order(ByteOrder.BIG_ENDIAN)
+
         pkt.put(0x45.toByte()); pkt.put(0); pkt.putShort(ipLen.toShort())
-        pkt.putShort(0); pkt.putShort(0x4000.toShort()); pkt.put(64); pkt.put(17)
-        pkt.putShort(0); pkt.put(srcIp); pkt.put(dstIp)
+        pkt.putShort(0);        pkt.putShort(0x4000.toShort())
+        pkt.put(64);            pkt.put(17)
+        pkt.putShort(0);        pkt.put(srcIp); pkt.put(dstIp)
         pkt.putShort(10, checksum(pkt.array(), 0, 20).toShort())
+
         pkt.putShort(srcPort.toShort()); pkt.putShort(dstPort.toShort())
-        pkt.putShort(udpLen.toShort()); pkt.putShort(0)
+        pkt.putShort(udpLen.toShort());  pkt.putShort(0)    // UDP checksum = 0 (optional, RFC 768)
         pkt.put(payload)
         return pkt.array()
     }
 
     private fun checksum(d: ByteArray, off: Int, len: Int): Int {
         var s = 0; var i = off
-        while (i < off + len - 1) { s += ((d[i].toInt() and 0xFF) shl 8) or (d[i+1].toInt() and 0xFF); i += 2 }
+        while (i < off + len - 1) {
+            s += ((d[i].toInt() and 0xFF) shl 8) or (d[i + 1].toInt() and 0xFF); i += 2
+        }
         if (len % 2 != 0) s += (d[off + len - 1].toInt() and 0xFF) shl 8
         while (s ushr 16 != 0) s = (s and 0xFFFF) + (s ushr 16)
         return s.inv() and 0xFFFF
@@ -351,33 +368,48 @@ class VpnTrackerService : VpnService() {
 
     private fun logConnection(db: AppDatabase, domain: String, blocked: Boolean) {
         serviceScope.launch {
-            db.appDao().insertLog(ConnectionLog(packageName = "firewall", domain = domain, isBlocked = blocked))
+            db.appDao().insertLog(
+                ConnectionLog(packageName = "firewall", domain = domain, isBlocked = blocked)
+            )
         }
     }
 
     // ── Notification ──────────────────────────────────────────────────────────
     //
-    //  STANDBY  →  "ANDROWALL // STANDBY"  +  [▶ START] action
-    //  ACTIVE   →  "ANDROWALL // ACTIVE"   +  [■ STOP]  action
-    //  Tapping the notification body opens the app.
+    //  Layout (both states):
+    //
+    //  [🛡 shield icon]  ANDROWALL // ACTIVE          [STOP]  [CLOSE]
+    //  [🛡 shield icon]  ANDROWALL // STANDBY         [START] [CLOSE]
+    //
+    //  • setOngoing(true)  → swipe-to-dismiss is disabled by the OS.
+    //  • Being a foreground-service notification → "Clear all" cannot remove it.
+    //  • The only way to remove the notification is pressing CLOSE, which also
+    //    stops the VPN tunnel and kills the background service entirely.
     // ─────────────────────────────────────────────────────────────────────────
 
     private fun buildNotification(running: Boolean): Notification {
         val flag = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
 
-        // Action button intent (START or STOP)
-        val actionPi = PendingIntent.getService(
+        // STOP / START toggle
+        val togglePi = PendingIntent.getService(
             this,
-            if (running) 0 else 1,          // distinct request codes to avoid PendingIntent collision
+            if (running) 0 else 1,          // distinct request codes prevent collision
             Intent(this, VpnTrackerService::class.java).apply {
                 action = if (running) ACTION_STOP_VPN else ACTION_START_VPN
             },
             flag
         )
 
-        // Tap body → open app
-        val openAppPi = PendingIntent.getActivity(
+        // CLOSE — removes notification + kills service
+        val closePi = PendingIntent.getService(
             this, 2,
+            Intent(this, VpnTrackerService::class.java).apply { action = ACTION_CLOSE },
+            flag
+        )
+
+        // Tap notification body → bring app to foreground
+        val openAppPi = PendingIntent.getActivity(
+            this, 3,
             Intent(this, MainActivity::class.java).apply {
                 flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
             },
@@ -390,18 +422,23 @@ class VpnTrackerService : VpnService() {
                 if (running) "DNS intercept active — filtering enabled"
                 else         "Engine offline — tap START to protect"
             )
-            .setSmallIcon(
-                if (running) android.R.drawable.ic_lock_idle_lock
-                else         android.R.drawable.ic_lock_idle_alarm
-            )
-            .setPriority(NotificationCompat.PRIORITY_LOW)
+            // ── Shield icon (monochrome vector in res/drawable/ic_shield.xml) ──
+            .setSmallIcon(R.drawable.ic_shield)
+            // ── Prevents swipe-to-dismiss; foreground service prevents Clear All ──
             .setOngoing(true)
             .setContentIntent(openAppPi)
+            // Action 1: STOP or START
             .addAction(
                 if (running) android.R.drawable.ic_media_pause
                 else         android.R.drawable.ic_media_play,
                 if (running) "STOP" else "START",
-                actionPi
+                togglePi
+            )
+            // Action 2: CLOSE — the only way to fully dismiss the notification
+            .addAction(
+                android.R.drawable.ic_menu_close_clear_cancel,
+                "CLOSE",
+                closePi
             )
             .build()
     }
