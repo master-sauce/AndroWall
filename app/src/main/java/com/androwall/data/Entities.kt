@@ -10,27 +10,11 @@ data class AppConfig(
     val isFilteringEnabled: Boolean = true
 )
 
-enum class MatchType {
-    EXACT,      // "ads.com"   → only "ads.com"
-    SUBDOMAIN,  // "ads.com"   → "ads.com" and any subdomain
-    PREFIX,     // "ads"       → "ads.example.com"
-    SUFFIX,     // ".ru"       → "evil.ru"
-    CONTAINS    // "tracker"   → "ad-tracker.com"
-}
-
-enum class RuleAction { BLOCK, ALLOW }
-
-/** BLACKLIST = block matched, allow rest.  WHITELIST = allow matched, block rest. */
-enum class FilterMode { BLACKLIST, WHITELIST }
-
-@Entity(tableName = "filter_rules")
-data class FilterRule(
+@Entity(tableName = "blocked_domains")
+data class BlockedDomain(
     @PrimaryKey(autoGenerate = true) val id: Int = 0,
     val packageName: String?,
-    val pattern: String,
-    val matchType: MatchType = MatchType.SUBDOMAIN,
-    val action: RuleAction = RuleAction.BLOCK,
-    val isEnabled: Boolean = true
+    val domain: String
 )
 
 @Entity(tableName = "connection_logs")
@@ -40,4 +24,39 @@ data class ConnectionLog(
     val domain: String,
     val timestamp: Long = System.currentTimeMillis(),
     val isBlocked: Boolean
+)
+
+// ── Rule system ───────────────────────────────────────────────────────────────
+
+enum class FilterMode { BLACKLIST, WHITELIST }
+enum class RuleAction  { BLOCK, ALLOW }
+
+enum class MatchType {
+    EXACT, SUBDOMAIN, CONTAINS, PREFIX, SUFFIX;
+
+    fun displayName() = when (this) {
+        EXACT     -> "Exact"
+        SUBDOMAIN -> "Subdomain"
+        CONTAINS  -> "Contains"
+        PREFIX    -> "Prefix"
+        SUFFIX    -> "Suffix"
+    }
+
+    fun description() = when (this) {
+        EXACT     -> "exact domain only"
+        SUBDOMAIN -> "domain + all subdomains"
+        CONTAINS  -> "keyword anywhere in domain"
+        PREFIX    -> "domain starts with pattern"
+        SUFFIX    -> "domain ends with pattern"
+    }
+}
+
+@Entity(tableName = "filter_rules")
+data class FilterRule(
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    val packageName: String?,          // null = global
+    val pattern: String,
+    val matchType: MatchType = MatchType.SUBDOMAIN,
+    val action: RuleAction  = RuleAction.BLOCK,
+    val isEnabled: Boolean  = true
 )
