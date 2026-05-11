@@ -22,7 +22,6 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CutCornerShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -94,6 +93,7 @@ fun AndroWallApp() {
 fun MainScreen(navController: NavController, dao: AppDao) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val snackbarHostState = remember { SnackbarHostState() }
 
     val appConfigs by dao.getAllAppConfigs().collectAsState(initial = emptyList())
     val recentLogs by dao.getRecentLogs().collectAsState(initial = emptyList())
@@ -105,6 +105,9 @@ fun MainScreen(navController: NavController, dao: AppDao) {
     var selectedTab by remember { mutableIntStateOf(0) }
     var showClearLogsDialog by remember { mutableStateOf(false) }
     var showAddGlobalRuleDialog by remember { mutableStateOf(false) }
+
+    // ── Log search state (for History tab) ───────────────────────────────────
+    var logSearchQuery by remember { mutableStateOf("") }
 
     val notifLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
     val vpnLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
@@ -126,6 +129,8 @@ fun MainScreen(navController: NavController, dao: AppDao) {
         appConfigs.filter { it.isFilteringEnabled }.map { it.packageName }.toSet()
     }
 
+    val hasEnabledApps = enabledPackages.isNotEmpty()
+
     val filteredApps = remember(installedApps, searchQuery, enabledPackages) {
         val pm = context.packageManager
         val base = if (searchQuery.isBlank()) installedApps
@@ -138,6 +143,14 @@ fun MainScreen(navController: NavController, dao: AppDao) {
             compareByDescending<ApplicationInfo> { it.packageName in enabledPackages }
                 .thenBy { pm.getApplicationLabel(it).toString() }
         )
+    }
+
+    // ── Filtered logs for History tab ─────────────────────────────────────────
+    val filteredLogs = remember(recentLogs, logSearchQuery) {
+        if (logSearchQuery.isBlank()) recentLogs
+        else recentLogs.filter { log ->
+            log.domain.contains(logSearchQuery, ignoreCase = true)
+        }
     }
 
     if (showClearLogsDialog) {
@@ -162,70 +175,42 @@ fun MainScreen(navController: NavController, dao: AppDao) {
 
     Scaffold(
         containerColor = CyberBlack,
+        snackbarHost = {
+            SnackbarHost(snackbarHostState) { data ->
+                Snackbar(
+                    snackbarData = data,
+                    containerColor = NeonRedGhost,
+                    contentColor = NeonRed,
+                    shape = CyberShapeSmall
+                )
+            }
+        },
         topBar = {
-            // Custom top bar — monospace title with grid background
             Box(
-                Modifier
-                    .fillMaxWidth()
-                    .background(CyberDeep)
-                    .statusBarsPadding()
+                Modifier.fillMaxWidth().background(CyberDeep).statusBarsPadding()
             ) {
                 CyberGrid(Modifier.matchParentSize(), cellSize = 24.dp)
                 Column(Modifier.padding(horizontal = 20.dp, vertical = 16.dp)) {
-                    Text(
-                        "ANDROWALL",
-                        fontFamily = FontFamily.Monospace,
-                        fontWeight = FontWeight.Black,
-                        fontSize   = 26.sp,
-                        letterSpacing = 8.sp,
-                        color = NeonCyan
-                    )
-                    Text(
-                        "DNS FIREWALL  //  NETWORK SENTINEL",
-                        fontFamily = FontFamily.Monospace,
-                        fontWeight = FontWeight.Normal,
-                        fontSize   = 9.sp,
-                        letterSpacing = 2.sp,
-                        color = NeonCyanDim
-                    )
+                    Text("ANDROWALL",
+                        fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Black,
+                        fontSize = 26.sp, letterSpacing = 8.sp, color = NeonCyan)
+                    Text("DNS FIREWALL  //  NETWORK SENTINEL",
+                        fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Normal,
+                        fontSize = 9.sp, letterSpacing = 2.sp, color = NeonCyanDim)
                 }
-                // Bottom accent line
                 Box(
-                    Modifier
-                        .fillMaxWidth()
-                        .height(1.dp)
-                        .align(Alignment.BottomStart)
-                        .background(
-                            Brush.horizontalGradient(
-                                listOf(NeonCyan.copy(0.8f), NeonCyan.copy(0.2f), Color.Transparent)
-                            )
-                        )
+                    Modifier.fillMaxWidth().height(1.dp).align(Alignment.BottomStart)
+                        .background(Brush.horizontalGradient(
+                            listOf(NeonCyan.copy(0.8f), NeonCyan.copy(0.2f), Color.Transparent)))
                 )
             }
         },
         bottomBar = {
-            Box(
-                Modifier
-                    .fillMaxWidth()
-                    .background(CyberDeep)
-                    .navigationBarsPadding()
-            ) {
-                // Top accent line on nav bar
-                Box(
-                    Modifier
-                        .fillMaxWidth()
-                        .height(1.dp)
-                        .background(
-                            Brush.horizontalGradient(
-                                listOf(Color.Transparent, NeonCyan.copy(0.4f), Color.Transparent)
-                            )
-                        )
-                )
-                NavigationBar(
-                    containerColor = Color.Transparent,
-                    contentColor = NeonCyan,
-                    tonalElevation = 0.dp
-                ) {
+            Box(Modifier.fillMaxWidth().background(CyberDeep).navigationBarsPadding()) {
+                Box(Modifier.fillMaxWidth().height(1.dp)
+                    .background(Brush.horizontalGradient(
+                        listOf(Color.Transparent, NeonCyan.copy(0.4f), Color.Transparent))))
+                NavigationBar(containerColor = Color.Transparent, contentColor = NeonCyan, tonalElevation = 0.dp) {
                     listOf(
                         Triple(0, Icons.Default.Home, "APPS"),
                         Triple(1, Icons.Default.List, "HISTORY"),
@@ -235,19 +220,12 @@ fun MainScreen(navController: NavController, dao: AppDao) {
                             selected = selectedTab == idx,
                             onClick = { selectedTab = idx },
                             icon = { Icon(icon, null, Modifier.size(20.dp)) },
-                            label = {
-                                Text(label,
-                                    fontFamily = FontFamily.Monospace,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 9.sp,
-                                    letterSpacing = 1.sp)
-                            },
+                            label = { Text(label, fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.Bold, fontSize = 9.sp, letterSpacing = 1.sp) },
                             colors = NavigationBarItemDefaults.colors(
-                                selectedIconColor   = NeonCyan,
-                                selectedTextColor   = NeonCyan,
-                                unselectedIconColor = CyberTextSecondary,
-                                unselectedTextColor = CyberTextSecondary,
-                                indicatorColor      = NeonCyanGhost
+                                selectedIconColor = NeonCyan, selectedTextColor = NeonCyan,
+                                unselectedIconColor = CyberTextSecondary, unselectedTextColor = CyberTextSecondary,
+                                indicatorColor = NeonCyanGhost
                             )
                         )
                     }
@@ -262,29 +240,31 @@ fun MainScreen(navController: NavController, dao: AppDao) {
                 ) {
                     CyberFab(
                         onClick = { showClearLogsDialog = true },
-                        icon = Icons.Default.Delete,
-                        color = NeonRed,
-                        contentDescription = "Clear logs"
+                        icon = Icons.Default.Delete, color = NeonRed, contentDescription = "Clear logs"
                     )
                 }
                 2 -> CyberFab(
                     onClick = { showAddGlobalRuleDialog = true },
-                    icon = Icons.Default.Add,
-                    color = NeonCyan,
-                    contentDescription = "Add rule"
+                    icon = Icons.Default.Add, color = NeonCyan, contentDescription = "Add rule"
                 )
                 else -> {}
             }
         }
     ) { padding ->
-        Column(
-            Modifier
-                .padding(padding)
-                .fillMaxSize()
-                .background(CyberBlack)
-        ) {
+        Column(Modifier.padding(padding).fillMaxSize().background(CyberBlack)) {
             FirewallStatusCard(
+                hasEnabledApps = hasEnabledApps,
                 onStart = {
+                    if (!hasEnabledApps) {
+                        // ── Pre-flight: block start if no apps are enabled ────
+                        scope.launch {
+                            snackbarHostState.showSnackbar(
+                                message = "// ERROR: no apps have firewall filtering enabled. Enable at least one app first.",
+                                duration = SnackbarDuration.Long
+                            )
+                        }
+                        return@FirewallStatusCard
+                    }
                     val intent = VpnService.prepare(context)
                     if (intent != null) vpnLauncher.launch(intent)
                     else context.startService(Intent(context, VpnTrackerService::class.java))
@@ -297,25 +277,17 @@ fun MainScreen(navController: NavController, dao: AppDao) {
             )
             when (selectedTab) {
                 0 -> {
-                    // Cyber search field
+                    // Search field for apps
                     Box(
-                        Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 8.dp)
+                        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
                             .background(CyberNavy, CyberShapeMedium)
                             .border(1.dp, CyberBorderBright.copy(0.5f), CyberShapeMedium)
                     ) {
                         OutlinedTextField(
-                            value = searchQuery,
-                            onValueChange = { searchQuery = it },
+                            value = searchQuery, onValueChange = { searchQuery = it },
                             modifier = Modifier.fillMaxWidth(),
-                            placeholder = {
-                                Text("SEARCH APPS...",
-                                    fontFamily = FontFamily.Monospace,
-                                    fontSize = 12.sp,
-                                    letterSpacing = 1.sp,
-                                    color = CyberTextSecondary)
-                            },
+                            placeholder = { Text("SEARCH APPS...", fontFamily = FontFamily.Monospace,
+                                fontSize = 12.sp, letterSpacing = 1.sp, color = CyberTextSecondary) },
                             leadingIcon = { Icon(Icons.Default.Search, null, tint = NeonCyan, modifier = Modifier.size(18.dp)) },
                             trailingIcon = {
                                 if (searchQuery.isNotEmpty())
@@ -325,16 +297,11 @@ fun MainScreen(navController: NavController, dao: AppDao) {
                             },
                             singleLine = true,
                             colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor   = Color.Transparent,
-                                unfocusedBorderColor = Color.Transparent,
-                                focusedTextColor     = CyberTextPrimary,
-                                unfocusedTextColor   = CyberTextPrimary,
-                                cursorColor          = NeonCyan
+                                focusedBorderColor = Color.Transparent, unfocusedBorderColor = Color.Transparent,
+                                focusedTextColor = CyberTextPrimary, unfocusedTextColor = CyberTextPrimary,
+                                cursorColor = NeonCyan
                             ),
-                            textStyle = LocalTextStyle.current.copy(
-                                fontFamily = FontFamily.Monospace,
-                                fontSize   = 13.sp
-                            )
+                            textStyle = LocalTextStyle.current.copy(fontFamily = FontFamily.Monospace, fontSize = 13.sp)
                         )
                     }
                     LazyColumn(Modifier.weight(1f)) {
@@ -348,7 +315,52 @@ fun MainScreen(navController: NavController, dao: AppDao) {
                         }
                     }
                 }
-                1 -> GlobalLogList(recentLogs, globalRules, filterMode, dao, scope)
+                1 -> {
+                    // ── History tab with log search ───────────────────────────
+                    // Log search field
+                    Box(
+                        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
+                            .background(CyberNavy, CyberShapeMedium)
+                            .border(1.dp, CyberBorderBright.copy(0.5f), CyberShapeMedium)
+                    ) {
+                        OutlinedTextField(
+                            value = logSearchQuery, onValueChange = { logSearchQuery = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            placeholder = { Text("SEARCH LOGS...", fontFamily = FontFamily.Monospace,
+                                fontSize = 12.sp, letterSpacing = 1.sp, color = CyberTextSecondary) },
+                            leadingIcon = { Icon(Icons.Default.Search, null, tint = NeonCyan, modifier = Modifier.size(18.dp)) },
+                            trailingIcon = {
+                                if (logSearchQuery.isNotEmpty())
+                                    IconButton(onClick = { logSearchQuery = "" }) {
+                                        Icon(Icons.Default.Clear, "Clear", tint = NeonCyanDim, modifier = Modifier.size(16.dp))
+                                    }
+                            },
+                            singleLine = true,
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = Color.Transparent, unfocusedBorderColor = Color.Transparent,
+                                focusedTextColor = CyberTextPrimary, unfocusedTextColor = CyberTextPrimary,
+                                cursorColor = NeonCyan
+                            ),
+                            textStyle = LocalTextStyle.current.copy(fontFamily = FontFamily.Monospace, fontSize = 13.sp)
+                        )
+                    }
+                    // Filtered log count indicator
+                    if (logSearchQuery.isNotBlank()) {
+                        Text(
+                            "// ${filteredLogs.size} of ${recentLogs.size} results",
+                            fontFamily = FontFamily.Monospace, fontSize = 9.sp,
+                            letterSpacing = 0.5.sp, color = NeonCyanDim,
+                            modifier = Modifier.padding(horizontal = 20.dp, vertical = 2.dp)
+                        )
+                    }
+                    GlobalLogList(
+                        logs = filteredLogs,
+                        globalRules = globalRules,
+                        filterMode = filterMode,
+                        dao = dao,
+                        scope = scope
+                    )
+                }
                 2 -> GlobalRulesTab(globalRules, filterMode, context, dao, scope)
             }
         }
@@ -358,29 +370,21 @@ fun MainScreen(navController: NavController, dao: AppDao) {
 // ── Firewall status card ──────────────────────────────────────────────────────
 
 @Composable
-fun FirewallStatusCard(onStart: () -> Unit, onStop: () -> Unit) {
+fun FirewallStatusCard(hasEnabledApps: Boolean, onStart: () -> Unit, onStop: () -> Unit) {
     val isRunning by VpnTrackerService.isRunning.collectAsState()
     val borderColor = if (isRunning) NeonGreen else CyberBorderMid
     val accentColor = if (isRunning) NeonGreen else NeonCyanDim
 
     Box(
-        Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 12.dp)
+        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)
             .background(CyberNavy, CyberShapeLarge)
             .border(1.dp, borderColor.copy(0.5f), CyberShapeLarge)
             .clip(CyberShapeLarge)
     ) {
-        // Grid overlay
         CyberGrid(Modifier.matchParentSize(), color = accentColor, cellSize = 32.dp)
-        // Scan line only when running
         if (isRunning) ScanLineOverlay(Modifier.matchParentSize(), color = NeonGreen)
 
-        Row(
-            Modifier.padding(horizontal = 20.dp, vertical = 16.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            // Status indicator
+        Row(Modifier.padding(horizontal = 20.dp, vertical = 16.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 PulsingDot(
                     color = if (isRunning) NeonGreen else CyberTextSecondary,
@@ -388,8 +392,7 @@ fun FirewallStatusCard(onStart: () -> Unit, onStop: () -> Unit) {
                 )
                 Spacer(Modifier.height(6.dp))
                 Icon(
-                    if (isRunning) Icons.Default.Lock else Icons.Default.LockOpen,
-                    null,
+                    if (isRunning) Icons.Default.Lock else Icons.Default.LockOpen, null,
                     tint = if (isRunning) NeonGreen else CyberTextSecondary,
                     modifier = Modifier.size(22.dp)
                 )
@@ -398,29 +401,30 @@ fun FirewallStatusCard(onStart: () -> Unit, onStop: () -> Unit) {
             Column(Modifier.weight(1f)) {
                 Text(
                     if (isRunning) "SYS:ACTIVE" else "SYS:OFFLINE",
-                    fontFamily = FontFamily.Monospace,
-                    fontWeight = FontWeight.Black,
-                    fontSize   = 16.sp,
-                    letterSpacing = 2.sp,
+                    fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Black,
+                    fontSize = 16.sp, letterSpacing = 2.sp,
                     color = if (isRunning) NeonGreen else CyberTextSecondary
                 )
                 Spacer(Modifier.height(2.dp))
                 Text(
                     if (isRunning) "DNS INTERCEPT  //  FILTERING ACTIVE"
-                    else           "ENGINE OFFLINE  //  UNPROTECTED",
-                    fontFamily = FontFamily.Monospace,
-                    fontSize   = 9.sp,
-                    letterSpacing = 1.sp,
+                    else "ENGINE OFFLINE  //  UNPROTECTED",
+                    fontFamily = FontFamily.Monospace, fontSize = 9.sp, letterSpacing = 1.sp,
                     color = if (isRunning) NeonGreen.copy(0.6f) else CyberTextTertiary
                 )
-                if (!isRunning) {
+                if (!isRunning && !hasEnabledApps) {
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        "// enable filtering on at least one app",
-                        fontFamily = FontFamily.Monospace,
-                        fontSize   = 9.sp,
-                        letterSpacing = 0.5.sp,
+                        "// no apps have filtering enabled",
+                        fontFamily = FontFamily.Monospace, fontSize = 9.sp, letterSpacing = 0.5.sp,
                         color = NeonRed.copy(0.7f)
+                    )
+                } else if (!isRunning) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "// ${if (hasEnabledApps) "ready — press START to begin filtering" else "enable filtering on at least one app"}",
+                        fontFamily = FontFamily.Monospace, fontSize = 9.sp, letterSpacing = 0.5.sp,
+                        color = NeonGreen.copy(0.5f)
                     )
                 }
             }
@@ -443,31 +447,22 @@ fun AppListItem(app: ApplicationInfo, config: AppConfig?, onClick: () -> Unit) {
     val isEnabled = config?.isFilteringEnabled == true
 
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 2.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // Left accent stripe
         Box(
-            Modifier
-                .width(3.dp)
-                .height(52.dp)
+            Modifier.width(3.dp).height(52.dp)
                 .background(
                     Brush.verticalGradient(
-                        if (isEnabled) listOf(NeonGreen, NeonCyan)
-                        else listOf(CyberBorderMid, CyberBorderFaint)
+                        if (isEnabled) listOf(NeonGreen, NeonCyan) else listOf(CyberBorderMid, CyberBorderFaint)
                     ),
                     CutCornerShape(2.dp)
                 )
         )
         Spacer(Modifier.width(12.dp))
-        // App icon
         Box(
-            Modifier
-                .size(38.dp)
-                .background(CyberSlate, CyberShapeSmall)
+            Modifier.size(38.dp).background(CyberSlate, CyberShapeSmall)
                 .border(0.5.dp, if (isEnabled) NeonCyan.copy(0.3f) else CyberBorderMid, CyberShapeSmall)
                 .clip(CyberShapeSmall)
         ) {
@@ -475,40 +470,15 @@ fun AppListItem(app: ApplicationInfo, config: AppConfig?, onClick: () -> Unit) {
         }
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
-            Text(
-                label,
-                fontFamily = FontFamily.Monospace,
-                fontWeight = FontWeight.SemiBold,
-                fontSize   = 13.sp,
-                color = CyberTextPrimary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            Text(
-                app.packageName,
-                fontFamily = FontFamily.Monospace,
-                fontSize   = 9.sp,
-                letterSpacing = 0.3.sp,
-                color = CyberTextSecondary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
+            Text(label, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.SemiBold,
+                fontSize = 13.sp, color = CyberTextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(app.packageName, fontFamily = FontFamily.Monospace, fontSize = 9.sp,
+                letterSpacing = 0.3.sp, color = CyberTextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
-        if (isEnabled) {
-            NeonChip("ACTIVE", NeonGreen)
-            Spacer(Modifier.width(8.dp))
-        }
+        if (isEnabled) { NeonChip("ACTIVE", NeonGreen); Spacer(Modifier.width(8.dp)) }
         Icon(Icons.Default.ChevronRight, null, tint = CyberBorderBright, modifier = Modifier.size(16.dp))
     }
-
-    // Divider
-    Box(
-        Modifier
-            .fillMaxWidth()
-            .padding(start = 31.dp)
-            .height(0.5.dp)
-            .background(CyberBorderFaint)
-    )
+    Box(Modifier.fillMaxWidth().padding(start = 31.dp).height(0.5.dp).background(CyberBorderFaint))
 }
 
 @Composable
@@ -530,68 +500,43 @@ fun AppIconImage(packageName: String, modifier: Modifier = Modifier) {
 fun FilterModeCard(currentMode: FilterMode, onModeChange: (FilterMode) -> Unit) {
     val isBlacklist = currentMode == FilterMode.BLACKLIST
     Box(
-        Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 8.dp)
+        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
             .background(CyberNavy, CyberShapeMedium)
             .border(1.dp, NeonCyan.copy(0.3f), CyberShapeMedium)
             .padding(16.dp)
     ) {
         Column {
-            Text("FILTER MODE",
-                fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold,
+            Text("FILTER MODE", fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold,
                 fontSize = 10.sp, letterSpacing = 2.sp, color = NeonCyan)
             Spacer(Modifier.height(10.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                // Blacklist
                 Box(
-                    Modifier
-                        .weight(1f)
-                        .background(
-                            if (isBlacklist) NeonRedGhost else CyberSlate,
-                            CyberShapeSmall
-                        )
-                        .border(
-                            1.dp,
-                            if (isBlacklist) NeonRed.copy(0.7f) else CyberBorderMid,
-                            CyberShapeSmall
-                        )
+                    Modifier.weight(1f)
+                        .background(if (isBlacklist) NeonRedGhost else CyberSlate, CyberShapeSmall)
+                        .border(1.dp, if (isBlacklist) NeonRed.copy(0.7f) else CyberBorderMid, CyberShapeSmall)
                         .clickable { onModeChange(FilterMode.BLACKLIST) }
                         .padding(horizontal = 12.dp, vertical = 10.dp)
                 ) {
                     Column {
-                        Text("BLACKLIST",
-                            fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold,
+                        Text("BLACKLIST", fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold,
                             fontSize = 11.sp, letterSpacing = 1.sp,
                             color = if (isBlacklist) NeonRed else CyberTextSecondary)
-                        Text("block matched / allow rest",
-                            fontFamily = FontFamily.Monospace, fontSize = 9.sp,
+                        Text("block matched / allow rest", fontFamily = FontFamily.Monospace, fontSize = 9.sp,
                             color = if (isBlacklist) NeonRed.copy(0.6f) else CyberTextTertiary)
                     }
                 }
-                // Whitelist
                 Box(
-                    Modifier
-                        .weight(1f)
-                        .background(
-                            if (!isBlacklist) NeonGreenGhost else CyberSlate,
-                            CyberShapeSmall
-                        )
-                        .border(
-                            1.dp,
-                            if (!isBlacklist) NeonGreen.copy(0.7f) else CyberBorderMid,
-                            CyberShapeSmall
-                        )
+                    Modifier.weight(1f)
+                        .background(if (!isBlacklist) NeonGreenGhost else CyberSlate, CyberShapeSmall)
+                        .border(1.dp, if (!isBlacklist) NeonGreen.copy(0.7f) else CyberBorderMid, CyberShapeSmall)
                         .clickable { onModeChange(FilterMode.WHITELIST) }
                         .padding(horizontal = 12.dp, vertical = 10.dp)
                 ) {
                     Column {
-                        Text("WHITELIST",
-                            fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold,
+                        Text("WHITELIST", fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold,
                             fontSize = 11.sp, letterSpacing = 1.sp,
                             color = if (!isBlacklist) NeonGreen else CyberTextSecondary)
-                        Text("allow matched / block rest",
-                            fontFamily = FontFamily.Monospace, fontSize = 9.sp,
+                        Text("allow matched / block rest", fontFamily = FontFamily.Monospace, fontSize = 9.sp,
                             color = if (!isBlacklist) NeonGreen.copy(0.6f) else CyberTextTertiary)
                     }
                 }
@@ -600,8 +545,7 @@ fun FilterModeCard(currentMode: FilterMode, onModeChange: (FilterMode) -> Unit) 
             Text(
                 "// ${if (isBlacklist) "all traffic permitted unless matched by a BLOCK rule"
                 else "all traffic denied unless matched by an ALLOW rule"}",
-                fontFamily = FontFamily.Monospace, fontSize = 9.sp, letterSpacing = 0.5.sp,
-                color = NeonCyanDim
+                fontFamily = FontFamily.Monospace, fontSize = 9.sp, letterSpacing = 0.5.sp, color = NeonCyanDim
             )
         }
     }
@@ -610,23 +554,15 @@ fun FilterModeCard(currentMode: FilterMode, onModeChange: (FilterMode) -> Unit) 
 // ── Global rules tab ──────────────────────────────────────────────────────────
 
 @Composable
-fun GlobalRulesTab(
-    rules: List<FilterRule>,
-    filterMode: FilterMode,
-    context: android.content.Context,
-    dao: AppDao,
-    scope: CoroutineScope
-) {
+fun GlobalRulesTab(rules: List<FilterRule>, filterMode: FilterMode,
+                   context: android.content.Context, dao: AppDao, scope: CoroutineScope) {
     Column(Modifier.fillMaxSize()) {
         FilterModeCard(filterMode) { VpnTrackerService.setFilterMode(context, it) }
         if (rules.isEmpty()) {
-            CyberEmptyState(
-                Icons.Default.Lock,
+            CyberEmptyState(Icons.Default.Lock,
                 if (filterMode == FilterMode.BLACKLIST)
                     "NO BLOCK RULES DEFINED\n// all traffic is permitted\n// tap + to add rules"
-                else
-                    "NO ALLOW RULES DEFINED\n// all traffic is blocked\n// tap + to add rules"
-            )
+                else "NO ALLOW RULES DEFINED\n// all traffic is blocked\n// tap + to add rules")
         } else {
             RulesListContent(rules, dao, scope)
         }
@@ -641,16 +577,14 @@ fun RulesListContent(rules: List<FilterRule>, dao: AppDao, scope: CoroutineScope
         if (allowRules.isNotEmpty()) {
             item { CyberSectionHeader("// ALLOW — WHITELIST", NeonGreen) }
             items(allowRules, key = { it.id }) { rule ->
-                RuleItem(rule,
-                    onDelete = { scope.launch { dao.deleteRule(rule) } },
+                RuleItem(rule, onDelete = { scope.launch { dao.deleteRule(rule) } },
                     onToggle = { scope.launch { dao.setRuleEnabled(rule.id, it) } })
             }
         }
         if (blockRules.isNotEmpty()) {
             item { CyberSectionHeader("// BLOCK — BLACKLIST", NeonRed) }
             items(blockRules, key = { it.id }) { rule ->
-                RuleItem(rule,
-                    onDelete = { scope.launch { dao.deleteRule(rule) } },
+                RuleItem(rule, onDelete = { scope.launch { dao.deleteRule(rule) } },
                     onToggle = { scope.launch { dao.setRuleEnabled(rule.id, it) } })
             }
         }
@@ -661,11 +595,8 @@ fun RulesListContent(rules: List<FilterRule>, dao: AppDao, scope: CoroutineScope
 
 @Composable
 fun GlobalLogList(
-    logs: List<ConnectionLog>,
-    globalRules: List<FilterRule>,
-    filterMode: FilterMode,
-    dao: AppDao,
-    scope: CoroutineScope
+    logs: List<ConnectionLog>, globalRules: List<FilterRule>, filterMode: FilterMode,
+    dao: AppDao, scope: CoroutineScope
 ) {
     if (logs.isEmpty()) {
         CyberEmptyState(Icons.Default.List, "NO DNS HISTORY\n// start the firewall to begin monitoring")
@@ -678,18 +609,14 @@ fun GlobalLogList(
             }
             LogItemExtended(
                 log = log, isEffectivelyBlocked = blocked, filterMode = filterMode,
-                onBlock = {
-                    scope.launch {
-                        dao.insertRule(FilterRule(packageName = null, pattern = log.domain,
-                            matchType = MatchType.SUBDOMAIN, action = RuleAction.BLOCK))
-                    }
-                },
-                onAllow = {
-                    scope.launch {
-                        dao.insertRule(FilterRule(packageName = null, pattern = log.domain,
-                            matchType = MatchType.SUBDOMAIN, action = RuleAction.ALLOW))
-                    }
-                }
+                onBlock = { scope.launch {
+                    dao.insertRule(FilterRule(packageName = null, pattern = log.domain,
+                        matchType = MatchType.SUBDOMAIN, action = RuleAction.BLOCK))
+                }},
+                onAllow = { scope.launch {
+                    dao.insertRule(FilterRule(packageName = null, pattern = log.domain,
+                        matchType = MatchType.SUBDOMAIN, action = RuleAction.ALLOW))
+                }}
             )
         }
     }
@@ -697,12 +624,8 @@ fun GlobalLogList(
 
 @Composable
 fun AppTrafficList(
-    logs: List<ConnectionLog>,
-    allRules: List<FilterRule>,
-    filterMode: FilterMode,
-    packageName: String,
-    dao: AppDao,
-    scope: CoroutineScope
+    logs: List<ConnectionLog>, allRules: List<FilterRule>, filterMode: FilterMode,
+    packageName: String, dao: AppDao, scope: CoroutineScope
 ) {
     if (logs.isEmpty()) {
         CyberEmptyState(Icons.Default.Info,
@@ -716,18 +639,14 @@ fun AppTrafficList(
             }
             LogItemExtended(
                 log = log, isEffectivelyBlocked = blocked, filterMode = filterMode,
-                onBlock = {
-                    scope.launch {
-                        dao.insertRule(FilterRule(packageName = packageName, pattern = log.domain,
-                            matchType = MatchType.SUBDOMAIN, action = RuleAction.BLOCK))
-                    }
-                },
-                onAllow = {
-                    scope.launch {
-                        dao.insertRule(FilterRule(packageName = packageName, pattern = log.domain,
-                            matchType = MatchType.SUBDOMAIN, action = RuleAction.ALLOW))
-                    }
-                }
+                onBlock = { scope.launch {
+                    dao.insertRule(FilterRule(packageName = packageName, pattern = log.domain,
+                        matchType = MatchType.SUBDOMAIN, action = RuleAction.BLOCK))
+                }},
+                onAllow = { scope.launch {
+                    dao.insertRule(FilterRule(packageName = packageName, pattern = log.domain,
+                        matchType = MatchType.SUBDOMAIN, action = RuleAction.ALLOW))
+                }}
             )
         }
     }
@@ -739,11 +658,8 @@ private val logDateFormat = SimpleDateFormat("MMM d, HH:mm:ss", Locale.getDefaul
 
 @Composable
 fun LogItemExtended(
-    log: ConnectionLog,
-    isEffectivelyBlocked: Boolean,
-    filterMode: FilterMode,
-    onBlock: () -> Unit,
-    onAllow: () -> Unit
+    log: ConnectionLog, isEffectivelyBlocked: Boolean, filterMode: FilterMode,
+    onBlock: () -> Unit, onAllow: () -> Unit
 ) {
     val accentColor = when {
         isEffectivelyBlocked -> NeonRed
@@ -752,56 +668,30 @@ fun LogItemExtended(
     }
 
     Row(
-        Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 2.dp),
+        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 2.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(
-            Modifier
-                .width(2.dp)
-                .height(44.dp)
+            Modifier.width(2.dp).height(44.dp)
                 .background(accentColor.copy(if (isEffectivelyBlocked || filterMode == FilterMode.WHITELIST) 0.8f else 0.2f),
                     CutCornerShape(1.dp))
         )
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
-            Text(
-                log.domain,
-                fontFamily = FontFamily.Monospace,
-                fontWeight = FontWeight.Medium,
-                fontSize   = 12.sp,
-                color = CyberTextPrimary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            Text(
-                remember(log.timestamp) { logDateFormat.format(Date(log.timestamp)) },
-                fontFamily = FontFamily.Monospace,
-                fontSize   = 9.sp,
-                letterSpacing = 0.5.sp,
-                color = CyberTextSecondary
-            )
+            Text(log.domain, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Medium,
+                fontSize = 12.sp, color = CyberTextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(remember(log.timestamp) { logDateFormat.format(Date(log.timestamp)) },
+                fontFamily = FontFamily.Monospace, fontSize = 9.sp, letterSpacing = 0.5.sp, color = CyberTextSecondary)
         }
         Spacer(Modifier.width(8.dp))
         when {
-            isEffectivelyBlocked && filterMode == FilterMode.WHITELIST ->
-                CyberTextButton("ALLOW", NeonGreen, onAllow)
-            isEffectivelyBlocked ->
-                NeonChip("BLOCKED", NeonRed)
-            filterMode == FilterMode.WHITELIST ->
-                NeonChip("ALLOWED", NeonGreen)
-            else ->
-                CyberTextButton("BLOCK", NeonRed, onBlock)
+            isEffectivelyBlocked && filterMode == FilterMode.WHITELIST -> CyberTextButton("ALLOW", NeonGreen, onAllow)
+            isEffectivelyBlocked -> NeonChip("BLOCKED", NeonRed)
+            filterMode == FilterMode.WHITELIST -> NeonChip("ALLOWED", NeonGreen)
+            else -> CyberTextButton("BLOCK", NeonRed, onBlock)
         }
     }
-    Box(
-        Modifier
-            .fillMaxWidth()
-            .padding(start = 30.dp)
-            .height(0.5.dp)
-            .background(CyberBorderFaint)
-    )
+    Box(Modifier.fillMaxWidth().padding(start = 30.dp).height(0.5.dp).background(CyberBorderFaint))
 }
 
 // ── Rule item ─────────────────────────────────────────────────────────────────
@@ -812,52 +702,28 @@ fun RuleItem(rule: FilterRule, onDelete: () -> Unit, onToggle: (Boolean) -> Unit
     val color = if (isBlock) NeonRed else NeonGreen
 
     Row(
-        Modifier
-            .fillMaxWidth()
-            .alpha(if (rule.isEnabled) 1f else 0.35f)
+        Modifier.fillMaxWidth().alpha(if (rule.isEnabled) 1f else 0.35f)
             .padding(horizontal = 16.dp, vertical = 2.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Box(
-            Modifier
-                .width(2.dp)
-                .height(50.dp)
-                .background(color.copy(if (rule.isEnabled) 0.8f else 0.3f), CutCornerShape(1.dp))
-        )
+        Box(Modifier.width(2.dp).height(50.dp)
+            .background(color.copy(if (rule.isEnabled) 0.8f else 0.3f), CutCornerShape(1.dp)))
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 NeonChip(rule.matchType.displayName().uppercase(), color)
                 Spacer(Modifier.width(8.dp))
-                Text(
-                    rule.pattern,
-                    fontFamily = FontFamily.Monospace,
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize   = 12.sp,
-                    color = CyberTextPrimary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                Text(rule.pattern, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.SemiBold,
+                    fontSize = 12.sp, color = CyberTextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             Spacer(Modifier.height(2.dp))
-            Text(
-                "// ${if (isBlock) "block" else "allow"} · ${rule.matchType.description()}",
-                fontFamily = FontFamily.Monospace,
-                fontSize   = 9.sp,
-                letterSpacing = 0.3.sp,
-                color = CyberTextSecondary
-            )
+            Text("// ${if (isBlock) "block" else "allow"} · ${rule.matchType.description()}",
+                fontFamily = FontFamily.Monospace, fontSize = 9.sp, letterSpacing = 0.3.sp, color = CyberTextSecondary)
         }
-        Switch(
-            checked = rule.isEnabled,
-            onCheckedChange = onToggle,
+        Switch(checked = rule.isEnabled, onCheckedChange = onToggle,
             colors = SwitchDefaults.colors(
-                checkedThumbColor  = CyberVoid,
-                checkedTrackColor  = color.copy(0.8f),
-                uncheckedThumbColor = CyberTextTertiary,
-                uncheckedTrackColor = CyberSlate
-            )
-        )
+                checkedThumbColor = CyberVoid, checkedTrackColor = color.copy(0.8f),
+                uncheckedThumbColor = CyberTextTertiary, uncheckedTrackColor = CyberSlate))
         IconButton(onClick = onDelete, modifier = Modifier.size(36.dp)) {
             Icon(Icons.Default.Delete, "Delete", tint = NeonRed.copy(0.6f), modifier = Modifier.size(16.dp))
         }
@@ -872,11 +738,12 @@ fun RuleItem(rule: FilterRule, onDelete: () -> Unit, onToggle: (Boolean) -> Unit
 fun AppDetailScreen(navController: NavController, dao: AppDao, packageName: String) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val pm = context.packageManager
 
     val label = remember(packageName) {
-        try { pm.getApplicationLabel(pm.getApplicationInfo(packageName, 0)).toString() }
-        catch (_: Exception) { packageName }
+        try {
+            context.packageManager.getApplicationLabel(
+                context.packageManager.getApplicationInfo(packageName, 0)).toString()
+        } catch (_: Exception) { packageName }
     }
 
     val configs by dao.getAllAppConfigs().collectAsState(initial = emptyList())
@@ -889,6 +756,14 @@ fun AppDetailScreen(navController: NavController, dao: AppDao, packageName: Stri
 
     var selectedSection by remember { mutableIntStateOf(0) }
     var showAddRuleDialog by remember { mutableStateOf(false) }
+    var showClearLogsDialog by remember { mutableStateOf(false) }
+
+    // ── Per-app log search state ──────────────────────────────────────────────
+    var logSearchQuery by remember { mutableStateOf("") }
+    val filteredLogs = remember(allLogs, logSearchQuery) {
+        if (logSearchQuery.isBlank()) allLogs
+        else allLogs.filter { log -> log.domain.contains(logSearchQuery, ignoreCase = true) }
+    }
 
     if (showAddRuleDialog) {
         AddRuleDialog(
@@ -899,81 +774,66 @@ fun AppDetailScreen(navController: NavController, dao: AppDao, packageName: Stri
         )
     }
 
+    if (showClearLogsDialog) {
+        CyberAlertDialog(
+            title = "CLEAR LOGS",
+            text = "All DNS activity logs will be permanently deleted.",
+            confirmText = "PURGE",
+            confirmColor = NeonRed,
+            onConfirm = { scope.launch { dao.clearLogs() }; showClearLogsDialog = false },
+            onDismiss = { showClearLogsDialog = false }
+        )
+    }
+
     Scaffold(
         containerColor = CyberBlack,
         topBar = {
-            Box(
-                Modifier
-                    .fillMaxWidth()
-                    .background(CyberDeep)
-                    .statusBarsPadding()
-            ) {
+            Box(Modifier.fillMaxWidth().background(CyberDeep).statusBarsPadding()) {
                 CyberGrid(Modifier.matchParentSize(), cellSize = 24.dp)
-                Row(
-                    Modifier.padding(horizontal = 4.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
+                Row(Modifier.padding(horizontal = 4.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                     IconButton(onClick = { navController.popBackStack() }) {
                         Icon(Icons.Default.ArrowBack, "Back", tint = NeonCyan)
                     }
                     Box(
-                        Modifier
-                            .size(32.dp)
-                            .background(CyberSlate, CyberShapeSmall)
+                        Modifier.size(32.dp).background(CyberSlate, CyberShapeSmall)
                             .border(0.5.dp, NeonCyan.copy(0.3f), CyberShapeSmall)
                             .clip(CyberShapeSmall)
-                    ) {
-                        AppIconImage(packageName, Modifier.fillMaxSize().padding(3.dp))
-                    }
+                    ) { AppIconImage(packageName, Modifier.fillMaxSize().padding(3.dp)) }
                     Spacer(Modifier.width(10.dp))
                     Column {
-                        Text(
-                            label.uppercase(),
-                            fontFamily = FontFamily.Monospace,
-                            fontWeight = FontWeight.Bold,
-                            fontSize   = 14.sp,
-                            letterSpacing = 2.sp,
-                            color = NeonCyan,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Text(
-                            packageName,
-                            fontFamily = FontFamily.Monospace,
-                            fontSize   = 9.sp,
-                            color = CyberTextSecondary,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
+                        Text(label.uppercase(), fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.Bold, fontSize = 14.sp, letterSpacing = 2.sp,
+                            color = NeonCyan, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(packageName, fontFamily = FontFamily.Monospace, fontSize = 9.sp,
+                            color = CyberTextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
-                Box(
-                    Modifier
-                        .fillMaxWidth()
-                        .height(1.dp)
-                        .align(Alignment.BottomStart)
-                        .background(Brush.horizontalGradient(listOf(NeonCyan.copy(0.6f), NeonCyan.copy(0.1f), Color.Transparent)))
-                )
+                Box(Modifier.fillMaxWidth().height(1.dp).align(Alignment.BottomStart)
+                    .background(Brush.horizontalGradient(
+                        listOf(NeonCyan.copy(0.6f), NeonCyan.copy(0.1f), Color.Transparent))))
             }
         },
         floatingActionButton = {
-            AnimatedVisibility(visible = selectedSection == 1, enter = scaleIn() + fadeIn(), exit = scaleOut() + fadeOut()) {
-                CyberFab(onClick = { showAddRuleDialog = true }, icon = Icons.Default.Add,
-                    color = NeonCyan, contentDescription = "Add rule")
+            when (selectedSection) {
+                0 -> AnimatedVisibility(
+                    visible = allLogs.isNotEmpty(),
+                    enter = scaleIn() + fadeIn(), exit = scaleOut() + fadeOut()
+                ) {
+                    CyberFab(onClick = { showClearLogsDialog = true },
+                        icon = Icons.Default.Delete, color = NeonRed,
+                        contentDescription = "Clear logs")
+                }
+                1 -> CyberFab(onClick = { showAddRuleDialog = true },
+                    icon = Icons.Default.Add, color = NeonCyan,
+                    contentDescription = "Add rule")
+                else -> {}
             }
         }
     ) { padding ->
-        Column(
-            Modifier
-                .padding(padding)
-                .fillMaxSize()
-                .background(CyberBlack)
-        ) {
-            // Firewall toggle card
+        Column(Modifier.padding(padding).fillMaxSize().background(CyberBlack)) {
+            // Firewall toggle
             Box(
-                Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 12.dp)
+                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)
                     .background(CyberNavy, CyberShapeMedium)
                     .border(1.dp,
                         if (appConfig?.isFilteringEnabled == true) NeonGreen.copy(0.4f) else CyberBorderMid,
@@ -982,16 +842,15 @@ fun AppDetailScreen(navController: NavController, dao: AppDao, packageName: Stri
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
-                        Text("FIREWALL INTERCEPT",
-                            fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold,
-                            fontSize = 11.sp, letterSpacing = 1.5.sp, color = NeonCyan)
+                        Text("FIREWALL INTERCEPT", fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.Bold, fontSize = 11.sp, letterSpacing = 1.5.sp, color = NeonCyan)
                         Spacer(Modifier.height(2.dp))
                         Text(
-                            if (appConfig?.isFilteringEnabled == true)
-                                "// dns filtering active for this application"
+                            if (appConfig?.isFilteringEnabled == true) "// dns filtering active"
                             else "// application bypasses the firewall engine",
                             fontFamily = FontFamily.Monospace, fontSize = 9.sp,
-                            color = if (appConfig?.isFilteringEnabled == true) NeonGreen.copy(0.7f) else CyberTextSecondary
+                            color = if (appConfig?.isFilteringEnabled == true) NeonGreen.copy(0.7f)
+                            else CyberTextSecondary
                         )
                     }
                     Switch(
@@ -1000,58 +859,77 @@ fun AppDetailScreen(navController: NavController, dao: AppDao, packageName: Stri
                             scope.launch { dao.insertAppConfig(AppConfig(packageName, label, enabled)) }
                         },
                         colors = SwitchDefaults.colors(
-                            checkedThumbColor   = CyberVoid,
-                            checkedTrackColor   = NeonGreen.copy(0.8f),
-                            uncheckedThumbColor = CyberTextTertiary,
-                            uncheckedTrackColor = CyberSlate
+                            checkedThumbColor = CyberVoid, checkedTrackColor = NeonGreen.copy(0.8f),
+                            uncheckedThumbColor = CyberTextTertiary, uncheckedTrackColor = CyberSlate
                         )
                     )
                 }
             }
 
-            // Cyber tab row
+            // Tab row
             Row(
-                Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp)
+                Modifier.fillMaxWidth().padding(horizontal = 16.dp)
                     .background(CyberNavy, CyberShapeSmall)
                     .border(1.dp, CyberBorderMid, CyberShapeSmall)
                     .padding(4.dp)
             ) {
-                listOf("DNS ACTIVITY", "APP RULES").forEachIndexed { idx, label2 ->
+                listOf("DNS ACTIVITY", "APP RULES").forEachIndexed { idx, tabLabel ->
                     val selected = selectedSection == idx
-                    val tabLabel = if (idx == 1 && appRules.isNotEmpty()) "$label2 [${appRules.size}]" else label2
+                    val display = if (idx == 1 && appRules.isNotEmpty()) "$tabLabel [${appRules.size}]" else tabLabel
                     Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .background(
-                                if (selected) NeonCyanGhost else Color.Transparent,
-                                CyberShapeSmall
-                            )
-                            .border(
-                                if (selected) 1.dp else 0.dp,
-                                if (selected) NeonCyan.copy(0.5f) else Color.Transparent,
-                                CyberShapeSmall
-                            )
+                        modifier = Modifier.weight(1f)
+                            .background(if (selected) NeonCyanGhost else Color.Transparent, CyberShapeSmall)
+                            .border(if (selected) 1.dp else 0.dp,
+                                if (selected) NeonCyan.copy(0.5f) else Color.Transparent, CyberShapeSmall)
                             .clickable { selectedSection = idx }
                             .padding(vertical = 8.dp),
                         contentAlignment = Alignment.Center
                     ) {
-                        Text(
-                            tabLabel,
-                            fontFamily = FontFamily.Monospace,
-                            fontWeight = FontWeight.Bold,
-                            fontSize   = 10.sp,
-                            letterSpacing = 1.sp,
-                            color = if (selected) NeonCyan else CyberTextSecondary
-                        )
+                        Text(display, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold,
+                            fontSize = 10.sp, letterSpacing = 1.sp,
+                            color = if (selected) NeonCyan else CyberTextSecondary)
                     }
                 }
             }
             Spacer(Modifier.height(4.dp))
 
             if (selectedSection == 0) {
-                AppTrafficList(allLogs, combinedRules, filterMode, packageName, dao, scope)
+                // ── Log search field ──────────────────────────────────────────
+                Box(
+                    Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)
+                        .background(CyberNavy, CyberShapeMedium)
+                        .border(1.dp, CyberBorderBright.copy(0.5f), CyberShapeMedium)
+                ) {
+                    OutlinedTextField(
+                        value = logSearchQuery, onValueChange = { logSearchQuery = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        placeholder = { Text("SEARCH LOGS...", fontFamily = FontFamily.Monospace,
+                            fontSize = 12.sp, letterSpacing = 1.sp, color = CyberTextSecondary) },
+                        leadingIcon = { Icon(Icons.Default.Search, null, tint = NeonCyan, modifier = Modifier.size(18.dp)) },
+                        trailingIcon = {
+                            if (logSearchQuery.isNotEmpty())
+                                IconButton(onClick = { logSearchQuery = "" }) {
+                                    Icon(Icons.Default.Clear, "Clear", tint = NeonCyanDim, modifier = Modifier.size(16.dp))
+                                }
+                        },
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = Color.Transparent, unfocusedBorderColor = Color.Transparent,
+                            focusedTextColor = CyberTextPrimary, unfocusedTextColor = CyberTextPrimary,
+                            cursorColor = NeonCyan
+                        ),
+                        textStyle = LocalTextStyle.current.copy(fontFamily = FontFamily.Monospace, fontSize = 13.sp)
+                    )
+                }
+                if (logSearchQuery.isNotBlank()) {
+                    Text(
+                        "// ${filteredLogs.size} of ${allLogs.size} results",
+                        fontFamily = FontFamily.Monospace, fontSize = 9.sp,
+                        letterSpacing = 0.5.sp, color = NeonCyanDim,
+                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 2.dp)
+                    )
+                }
+                AppTrafficList(filteredLogs, combinedRules, filterMode, packageName, dao, scope)
             } else {
                 AppRulesList(appRules, label, globalRules.size, dao, scope)
             }
@@ -1066,9 +944,7 @@ fun AppRulesList(rules: List<FilterRule>, appLabel: String, globalCount: Int, da
     Column(Modifier.fillMaxSize()) {
         if (globalCount > 0) {
             Row(
-                Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 6.dp)
+                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)
                     .background(NeonPurpleGhost, CyberShapeSmall)
                     .border(1.dp, NeonPurple.copy(0.3f), CyberShapeSmall)
                     .padding(10.dp),
@@ -1076,10 +952,8 @@ fun AppRulesList(rules: List<FilterRule>, appLabel: String, globalCount: Int, da
             ) {
                 Icon(Icons.Default.Info, null, Modifier.size(14.dp), tint = NeonPurple)
                 Spacer(Modifier.width(8.dp))
-                Text(
-                    "// $globalCount global rule${if (globalCount != 1) "s" else ""} also apply to this app",
-                    fontFamily = FontFamily.Monospace, fontSize = 10.sp, color = NeonPurple.copy(0.8f)
-                )
+                Text("// $globalCount global rule${if (globalCount != 1) "s" else ""} also apply",
+                    fontFamily = FontFamily.Monospace, fontSize = 10.sp, color = NeonPurple.copy(0.8f))
             }
         }
         if (rules.isEmpty()) {
@@ -1088,7 +962,7 @@ fun AppRulesList(rules: List<FilterRule>, appLabel: String, globalCount: Int, da
         } else {
             LazyColumn(Modifier.weight(1f)) {
                 val allowRules = rules.filter { it.action == RuleAction.ALLOW }
-                val blockRules = rules.filter { it.action == RuleAction.BLOCK }
+                val blockRules  = rules.filter { it.action == RuleAction.BLOCK }
                 if (allowRules.isNotEmpty()) {
                     item { CyberSectionHeader("// ALLOW", NeonGreen) }
                     items(allowRules, key = { it.id }) { rule ->
@@ -1112,7 +986,8 @@ fun AppRulesList(rules: List<FilterRule>, appLabel: String, globalCount: Int, da
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AddRuleDialog(title: String, initialAction: RuleAction = RuleAction.BLOCK, onDismiss: () -> Unit, onAdd: (FilterRule) -> Unit) {
+fun AddRuleDialog(title: String, initialAction: RuleAction = RuleAction.BLOCK,
+                  onDismiss: () -> Unit, onAdd: (FilterRule) -> Unit) {
     var pattern by remember { mutableStateOf("") }
     var matchType by remember { mutableStateOf(MatchType.SUBDOMAIN) }
     var action by remember { mutableStateOf(initialAction) }
@@ -1121,21 +996,15 @@ fun AddRuleDialog(title: String, initialAction: RuleAction = RuleAction.BLOCK, o
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        containerColor = CyberDeep,
-        tonalElevation = 0.dp,
-        shape = CyberShapeLarge,
-        title = {
-            Text(title, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold,
-                letterSpacing = 2.sp, color = NeonCyan)
-        },
+        containerColor = CyberDeep, tonalElevation = 0.dp, shape = CyberShapeLarge,
+        title = { Text(title, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold,
+            letterSpacing = 2.sp, color = NeonCyan) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                // Action toggle
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     listOf(RuleAction.BLOCK to NeonRed, RuleAction.ALLOW to NeonGreen).forEach { (a, color) ->
                         Box(
-                            modifier = Modifier
-                                .weight(1f)
+                            modifier = Modifier.weight(1f)
                                 .background(if (action == a) color.copy(0.15f) else CyberNavy, CyberShapeSmall)
                                 .border(1.dp, if (action == a) color.copy(0.8f) else CyberBorderMid, CyberShapeSmall)
                                 .clickable { action = a }
@@ -1150,17 +1019,15 @@ fun AddRuleDialog(title: String, initialAction: RuleAction = RuleAction.BLOCK, o
                 }
                 OutlinedTextField(
                     value = pattern, onValueChange = { pattern = it },
-                    label = { Text("PATTERN", fontFamily = FontFamily.Monospace, fontSize = 10.sp, letterSpacing = 1.sp) },
-                    placeholder = { Text("example.com", fontFamily = FontFamily.Monospace, fontSize = 12.sp, color = CyberTextTertiary) },
+                    label = { Text("PATTERN", fontFamily = FontFamily.Monospace,
+                        fontSize = 10.sp, letterSpacing = 1.sp) },
+                    placeholder = { Text("example.com", fontFamily = FontFamily.Monospace,
+                        fontSize = 12.sp, color = CyberTextTertiary) },
                     singleLine = true, modifier = Modifier.fillMaxWidth(),
                     colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor   = NeonCyan.copy(0.6f),
-                        unfocusedBorderColor = CyberBorderMid,
-                        focusedTextColor     = CyberTextPrimary,
-                        unfocusedTextColor   = CyberTextPrimary,
-                        cursorColor          = NeonCyan,
-                        focusedLabelColor    = NeonCyan,
-                        unfocusedLabelColor  = CyberTextSecondary
+                        focusedBorderColor = NeonCyan.copy(0.6f), unfocusedBorderColor = CyberBorderMid,
+                        focusedTextColor = CyberTextPrimary, unfocusedTextColor = CyberTextPrimary,
+                        cursorColor = NeonCyan, focusedLabelColor = NeonCyan, unfocusedLabelColor = CyberTextSecondary
                     ),
                     textStyle = LocalTextStyle.current.copy(fontFamily = FontFamily.Monospace, fontSize = 13.sp)
                 )
@@ -1168,23 +1035,20 @@ fun AddRuleDialog(title: String, initialAction: RuleAction = RuleAction.BLOCK, o
                     OutlinedTextField(
                         value = "${matchType.displayName()} — ${matchType.description()}",
                         onValueChange = {}, readOnly = true,
-                        label = { Text("MATCH TYPE", fontFamily = FontFamily.Monospace, fontSize = 10.sp, letterSpacing = 1.sp) },
+                        label = { Text("MATCH TYPE", fontFamily = FontFamily.Monospace,
+                            fontSize = 10.sp, letterSpacing = 1.sp) },
                         trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(menuExpanded) },
                         modifier = Modifier.menuAnchor().fillMaxWidth(),
                         colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor   = NeonCyan.copy(0.6f),
-                            unfocusedBorderColor = CyberBorderMid,
-                            focusedTextColor     = CyberTextPrimary,
-                            unfocusedTextColor   = CyberTextPrimary,
-                            focusedLabelColor    = NeonCyan,
-                            unfocusedLabelColor  = CyberTextSecondary
+                            focusedBorderColor = NeonCyan.copy(0.6f), unfocusedBorderColor = CyberBorderMid,
+                            focusedTextColor = CyberTextPrimary, unfocusedTextColor = CyberTextPrimary,
+                            focusedLabelColor = NeonCyan, unfocusedLabelColor = CyberTextSecondary
                         ),
                         textStyle = LocalTextStyle.current.copy(fontFamily = FontFamily.Monospace, fontSize = 11.sp)
                     )
-                    ExposedDropdownMenu(
-                        expanded = menuExpanded, onDismissRequest = { menuExpanded = false },
-                        modifier = Modifier.background(CyberNavy)
-                    ) {
+                    ExposedDropdownMenu(expanded = menuExpanded,
+                        onDismissRequest = { menuExpanded = false },
+                        modifier = Modifier.background(CyberNavy)) {
                         MatchType.values().forEach { type ->
                             DropdownMenuItem(
                                 text = {
@@ -1205,16 +1069,13 @@ fun AddRuleDialog(title: String, initialAction: RuleAction = RuleAction.BLOCK, o
         },
         confirmButton = {
             val confirmColor = if (action == RuleAction.BLOCK) NeonRed else NeonGreen
-            CyberButton(text = action.name, color = confirmColor,
-                enabled = trimmed.isNotBlank(),
+            CyberButton(text = action.name, color = confirmColor, enabled = trimmed.isNotBlank(),
                 onClick = {
                     onAdd(FilterRule(packageName = null, pattern = trimmed, matchType = matchType, action = action))
                     onDismiss()
                 })
         },
-        dismissButton = {
-            CyberButton(text = "CANCEL", color = CyberTextSecondary, onClick = onDismiss)
-        }
+        dismissButton = { CyberButton(text = "CANCEL", color = CyberTextSecondary, onClick = onDismiss) }
     )
 }
 
@@ -1222,19 +1083,14 @@ fun AddRuleDialog(title: String, initialAction: RuleAction = RuleAction.BLOCK, o
 
 @Composable
 fun CyberAlertDialog(
-    title: String,
-    text: String,
-    confirmText: String,
-    confirmColor: Color,
-    onConfirm: () -> Unit,
-    onDismiss: () -> Unit
+    title: String, text: String, confirmText: String, confirmColor: Color,
+    onConfirm: () -> Unit, onDismiss: () -> Unit
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        containerColor = CyberDeep,
-        tonalElevation = 0.dp,
-        shape = CyberShapeLarge,
-        title = { Text(title, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, letterSpacing = 2.sp, color = confirmColor) },
+        containerColor = CyberDeep, tonalElevation = 0.dp, shape = CyberShapeLarge,
+        title = { Text(title, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold,
+            letterSpacing = 2.sp, color = confirmColor) },
         text  = { Text(text, fontFamily = FontFamily.Monospace, fontSize = 12.sp, color = CyberTextSecondary) },
         confirmButton = { CyberButton(confirmText, confirmColor, onClick = onConfirm) },
         dismissButton = { CyberButton("CANCEL", CyberTextSecondary, onClick = onDismiss) }
@@ -1244,37 +1100,25 @@ fun CyberAlertDialog(
 // ── Primitive components ──────────────────────────────────────────────────────
 
 @Composable
-fun CyberButton(
-    text: String,
-    color: Color,
-    onClick: () -> Unit,
-    enabled: Boolean = true
-) {
+fun CyberButton(text: String, color: Color, onClick: () -> Unit, enabled: Boolean = true) {
     Box(
-        modifier = Modifier
-            .alpha(if (enabled) 1f else 0.4f)
+        modifier = Modifier.alpha(if (enabled) 1f else 0.4f)
             .background(color.copy(if (enabled) 0.12f else 0.05f), CyberShapeSmall)
             .border(1.dp, color.copy(if (enabled) 0.7f else 0.2f), CyberShapeSmall)
             .clickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 8.dp),
         contentAlignment = Alignment.Center
     ) {
-        Text(
-            text,
-            fontFamily = FontFamily.Monospace,
-            fontWeight = FontWeight.Bold,
-            fontSize   = 11.sp,
-            letterSpacing = 1.5.sp,
-            color = color.copy(if (enabled) 1f else 0.4f)
-        )
+        Text(text, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold,
+            fontSize = 11.sp, letterSpacing = 1.5.sp,
+            color = color.copy(if (enabled) 1f else 0.4f))
     }
 }
 
 @Composable
 fun CyberTextButton(text: String, color: Color, onClick: () -> Unit) {
     Box(
-        modifier = Modifier
-            .border(0.5.dp, color.copy(0.5f), CyberShapeChip)
+        modifier = Modifier.border(0.5.dp, color.copy(0.5f), CyberShapeChip)
             .clickable(onClick = onClick)
             .padding(horizontal = 8.dp, vertical = 4.dp)
     ) {
@@ -1291,15 +1135,12 @@ fun CyberFab(
     contentDescription: String
 ) {
     Box(
-        modifier = Modifier
-            .size(52.dp)
+        modifier = Modifier.size(52.dp)
             .background(color.copy(0.12f), CyberShapeMedium)
             .border(1.dp, color.copy(0.7f), CyberShapeMedium)
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center
-    ) {
-        Icon(icon, contentDescription, tint = color, modifier = Modifier.size(22.dp))
-    }
+    ) { Icon(icon, contentDescription, tint = color, modifier = Modifier.size(22.dp)) }
 }
 
 // ── Empty state ───────────────────────────────────────────────────────────────
@@ -1313,14 +1154,9 @@ fun CyberEmptyState(icon: androidx.compose.ui.graphics.vector.ImageVector, messa
     ) {
         Icon(icon, null, Modifier.size(56.dp), tint = NeonCyan.copy(alpha = 0.15f))
         Spacer(Modifier.height(20.dp))
-        Text(
-            message,
-            textAlign = TextAlign.Center,
-            fontFamily = FontFamily.Monospace,
-            fontSize   = 11.sp,
-            lineHeight = 18.sp,
-            letterSpacing = 0.5.sp,
-            color = CyberTextSecondary.copy(0.7f)
-        )
+        Text(message, textAlign = TextAlign.Center,
+            fontFamily = FontFamily.Monospace, fontSize = 11.sp,
+            lineHeight = 18.sp, letterSpacing = 0.5.sp,
+            color = CyberTextSecondary.copy(0.7f))
     }
 }
