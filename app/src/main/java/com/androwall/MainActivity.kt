@@ -261,7 +261,7 @@ fun MainScreen(navController: NavController, dao: AppDao) {
                 NavigationBar(containerColor = Color.Transparent, tonalElevation = 0.dp) {
                     listOf(
                         Triple(0, Icons.Default.Home, "APPS"),
-                        Triple(1, Icons.Default.List, "HISTORY"),
+                        Triple(1, Icons.Default.List, "LOGS"),
                         Triple(2, Icons.Default.Lock, "RULES")
                     ).forEach { (idx, icon, label) ->
                         NavigationBarItem(
