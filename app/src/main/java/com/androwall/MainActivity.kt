@@ -50,6 +50,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.unit.LayoutDirection
 
 // ── Entry point ───────────────────────────────────────────────────────────────
 
@@ -62,7 +65,13 @@ class MainActivity : ComponentActivity() {
             android.graphics.drawable.ColorDrawable(android.graphics.Color.parseColor("#0D0B09"))
         )
         enableEdgeToEdge()
-        setContent { AndroWallTheme { AndroWallApp() } }
+        setContent {
+            AndroWallTheme {
+                CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                    AndroWallApp()
+                }
+            }
+        }
     }
 }
 
@@ -211,7 +220,12 @@ fun MainScreen(navController: NavController, dao: AppDao) {
         topBar = {
             Box(Modifier.fillMaxWidth().background(AshDeep).statusBarsPadding()) {
                 EmberGrid(Modifier.matchParentSize(), cellSize = 24.dp)
-                Column(Modifier.padding(horizontal = 20.dp, vertical = 16.dp)) {
+                Column(
+                    Modifier
+                        .padding(horizontal = 20.dp, vertical = 16.dp)
+                        .fillMaxWidth(),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
                     Text(
                         "ANDROWALL",
                         fontFamily    = FontFamily.Monospace,
