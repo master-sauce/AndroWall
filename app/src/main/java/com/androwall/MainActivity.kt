@@ -227,15 +227,7 @@ fun MainScreen(navController: NavController, dao: AppDao) {
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Text(
-                        "ANDROWALL",
-                        fontFamily    = FontFamily.Monospace,
-                        fontWeight    = FontWeight.Black,
-                        fontSize      = 26.sp,
-                        letterSpacing = 8.sp,
-                        color         = PhoenixFlame
-                    )
-                    Text(
-                        "PHOENIX SHIELD  //  DNS FIREWALL ENGINE",
+                        "NETWORK SHIELD  //  DNS FIREWALL ENGINE",
                         fontFamily    = FontFamily.Monospace,
                         fontWeight    = FontWeight.Normal,
                         fontSize      = 9.sp,
@@ -494,8 +486,8 @@ fun FirewallStatusCard(hasEnabledApps: Boolean, onStart: () -> Unit, onStop: () 
                 )
                 Spacer(Modifier.height(2.dp))
                 Text(
-                    if (isRunning) "DNS INTERCEPT  //  SHIELD ACTIVE"
-                    else           "ENGINE OFFLINE  //  UNPROTECTED",
+                    if (isRunning) "SHIELD ENGINE IS RUNNING"
+                    else           "SHIELD ENGINE IS OFF",
                     fontFamily    = FontFamily.Monospace,
                     fontSize      = 9.sp,
                     letterSpacing = 1.sp,
@@ -504,7 +496,7 @@ fun FirewallStatusCard(hasEnabledApps: Boolean, onStart: () -> Unit, onStop: () 
                 if (!isRunning) {
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        if (hasEnabledApps) "// phoenix shield ready — press START"
+                        if (hasEnabledApps) "// shield is ready"
                         else                "// no apps enabled — go to APPS tab first",
                         fontFamily    = FontFamily.Monospace,
                         fontSize      = 9.sp,
