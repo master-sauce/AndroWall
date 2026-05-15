@@ -40,9 +40,13 @@ interface AppDao {
     @Query("SELECT * FROM filter_rules WHERE packageName = :packageName ORDER BY action ASC")
     fun getAppRules(packageName: String): Flow<List<FilterRule>>
 
-    @Query("SELECT * FROM filter_rules")
+    @Query("""
+    SELECT * FROM filter_rules 
+    ORDER BY 
+        CASE WHEN packageName IS NULL THEN 1 ELSE 0 END ASC,
+        id ASC
+""")
     fun getAllRules(): Flow<List<FilterRule>>
-
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertRule(rule: FilterRule)
 
