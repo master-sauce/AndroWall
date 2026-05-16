@@ -151,39 +151,38 @@ fun isEffectivelyBlocked(domain: String, rules: List<FilterRule>, mode: FilterMo
     }
 }
 
-/** Generates example domains that a wildcard pattern would match. */
+
+/**
+ * Generates example domains that a wildcard pattern would match.
+ * Works with any number of * wildcards — e.g. *.ads.*.com, *tracker*cdn*
+ */
 fun generateWildcardExamples(pattern: String): List<String> {
     if (!pattern.contains('*')) return emptyList()
-    return when {
-        pattern == "*" ->
-            listOf("anything.com", "everything.net", "example.org")
-        pattern.startsWith("*.") -> {
-            val base = pattern.drop(2)
-            listOf("www.$base", "ads.$base", "cdn.$base")
+
+    val parts    = pattern.split("*")           // segments between stars
+    val starCount = parts.size - 1
+
+    // Different filler words per example so output looks realistic
+    val fillerSets = listOf(
+        listOf("www", "cdn", "api", "static", "assets"),
+        listOf("ads", "track", "pixel", "beacon", "metric"),
+        listOf("s3", "media", "img", "data", "files")
+    )
+
+    return (0 until 3).mapNotNull { exampleIdx ->
+        val fillers = fillerSets[exampleIdx]
+        val sb = StringBuilder()
+        parts.forEachIndexed { partIdx, segment ->
+            sb.append(segment)
+            if (partIdx < starCount) {
+                // pick a different filler word per star position
+                sb.append(fillers[(exampleIdx + partIdx) % fillers.size])
+            }
         }
-        pattern.endsWith(".*") -> {
-            val base = pattern.dropLast(2)
-            listOf("$base.com", "$base.net", "$base.org")
-        }
-        pattern.startsWith("*") && pattern.endsWith("*") -> {
-            val mid = pattern.trim('*')
-            listOf("prefix-$mid.com", "get$mid.net", "my-$mid-cdn.io")
-        }
-        pattern.startsWith("*") -> {
-            val suffix = pattern.removePrefix("*")
-            listOf("www$suffix", "cdn$suffix", "api$suffix")
-        }
-        pattern.endsWith("*") -> {
-            val prefix = pattern.removeSuffix("*")
-            listOf("${prefix}cdn.com", "${prefix}api.net", "${prefix}static.io")
-        }
-        else -> {
-            val parts = pattern.split("*", limit = 2)
-            if (parts.size == 2)
-                listOf("${parts[0]}test${parts[1]}", "${parts[0]}cdn${parts[1]}")
-            else emptyList()
-        }
-    }
+        val result = sb.toString()
+        // Filter out blanks and patterns that look like the original (no substitution happened)
+        result.takeIf { it.isNotBlank() && it.contains('.') }
+    }.distinct()
 }
 
 // ── Main screen ───────────────────────────────────────────────────────────────
