@@ -37,8 +37,8 @@ fun PulsingDot(color: Color, size: Dp = 10.dp, modifier: Modifier = Modifier) {
     )
     Canvas(modifier.size(size)) {
         val r = size.toPx() / 2
-        drawCircle(color.copy(0.15f), r * 2.2f)   // static outer ring
-        drawCircle(color.copy(alpha),  r * 0.72f)  // pulsing core
+        drawCircle(color.copy(0.15f), r * 2.2f)
+        drawCircle(color.copy(alpha),  r * 0.72f)
     }
 }
 
@@ -47,20 +47,12 @@ fun PulsingDot(color: Color, size: Dp = 10.dp, modifier: Modifier = Modifier) {
 @Composable
 fun PhoenixSectionHeader(text: String, color: Color = PhoenixFlame, modifier: Modifier = Modifier) {
     Column(modifier.padding(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 6.dp)) {
-        Text(
-            text,
-            fontWeight = FontWeight.SemiBold,
-            fontSize   = 12.sp,
-            color      = color
-        )
+        Text(text, fontWeight = FontWeight.SemiBold, fontSize = 12.sp, color = color)
         Spacer(Modifier.height(6.dp))
         Box(
-            Modifier
-                .width(28.dp)
-                .height(2.dp)
-                .background(
-                    Brush.horizontalGradient(listOf(color, color.copy(0.15f)))
-                )
+            Modifier.width(28.dp).height(2.dp).background(
+                Brush.horizontalGradient(listOf(color, color.copy(0.15f)))
+            )
         )
     }
 }
@@ -75,13 +67,7 @@ fun EmberChip(text: String, color: Color, modifier: Modifier = Modifier) {
             .border(0.5.dp, color.copy(0.55f), PhoenixShapeChip)
             .padding(horizontal = 8.dp, vertical = 3.dp)
     ) {
-        Text(
-            text,
-            fontWeight    = FontWeight.SemiBold,
-            fontSize      = 10.sp,
-            letterSpacing = 0.3.sp,
-            color         = color
-        )
+        Text(text, fontWeight = FontWeight.SemiBold, fontSize = 10.sp, letterSpacing = 0.3.sp, color = color)
     }
 }
 
@@ -95,6 +81,9 @@ fun FireToastCard(
     modifier: Modifier = Modifier,
     color: Color = EmberRed
 ) {
+    // Uses LocalAppColors so it adapts to light/dark mode
+    val c = LocalAppColors.current
+
     LaunchedEffect(visible) {
         if (visible) { delay(4_000L); onDismiss() }
     }
@@ -109,11 +98,10 @@ fun FireToastCard(
             Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 14.dp)
-                .background(AshDeep, PhoenixShapeMedium)
+                .background(c.surface, PhoenixShapeMedium)
                 .border(1.dp, color.copy(0.65f), PhoenixShapeMedium)
                 .clip(PhoenixShapeMedium)
         ) {
-            // Accent strip
             Box(
                 Modifier
                     .fillMaxWidth()
@@ -149,11 +137,7 @@ fun FireToastCard(
                         .clickable(onClick = onDismiss),
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(
-                        Icons.Default.Close, "Dismiss",
-                        tint     = color.copy(0.8f),
-                        modifier = Modifier.size(14.dp)
-                    )
+                    Icon(Icons.Default.Close, "Dismiss", tint = color.copy(0.8f), modifier = Modifier.size(14.dp))
                 }
             }
         }

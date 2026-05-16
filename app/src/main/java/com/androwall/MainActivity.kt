@@ -59,9 +59,18 @@ import androidx.compose.ui.unit.LayoutDirection
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Load persisted theme before setContent so initial color is correct
+        ThemePreference.load(this)
+
+        val initialBg = if (ThemePreference.isDark.value)
+            android.graphics.Color.parseColor("#0D0B09")
+        else
+            android.graphics.Color.parseColor("#FAF6F2")
         window.setBackgroundDrawable(
-            android.graphics.drawable.ColorDrawable(android.graphics.Color.parseColor("#0D0B09"))
+            android.graphics.drawable.ColorDrawable(initialBg)
         )
+
         enableEdgeToEdge()
         setContent {
             AndroWallTheme {
@@ -80,10 +89,25 @@ fun AndroWallApp() {
     val context = LocalContext.current
     val navController = rememberNavController()
     val dao = AppDatabase.getDatabase(context).appDao()
+    val c = LocalAppColors.current
 
     LaunchedEffect(Unit) { VpnTrackerService.loadPersistedMode(context) }
 
-    Box(Modifier.fillMaxSize().background(AshBlack)) {
+    // Keep window background in sync when the user toggles theme
+    SideEffect {
+        (context as? android.app.Activity)?.window?.setBackgroundDrawable(
+            android.graphics.drawable.ColorDrawable(
+                android.graphics.Color.argb(
+                    255,
+                    (c.background.red   * 255).toInt(),
+                    (c.background.green * 255).toInt(),
+                    (c.background.blue  * 255).toInt()
+                )
+            )
+        )
+    }
+
+    Box(Modifier.fillMaxSize().background(c.background)) {
         NavHost(
             navController, startDestination = "main",
             enterTransition    = { EnterTransition.None },
@@ -132,6 +156,8 @@ fun isEffectivelyBlocked(domain: String, rules: List<FilterRule>, mode: FilterMo
 fun MainScreen(navController: NavController, dao: AppDao) {
     val context = LocalContext.current
     val scope   = rememberCoroutineScope()
+    val c       = LocalAppColors.current
+    val isDark  by ThemePreference.isDark.collectAsState()
 
     val appConfigs  by dao.getAllAppConfigs().collectAsState(initial = emptyList())
     val recentLogs  by dao.getRecentLogs().collectAsState(initial = emptyList())
@@ -193,7 +219,7 @@ fun MainScreen(navController: NavController, dao: AppDao) {
             title        = "Clear History",
             text         = "All connection logs will be permanently deleted.",
             confirmText  = "Clear",
-            confirmColor = EmberRed,
+            confirmColor = c.red,
             onConfirm    = { scope.launch { dao.clearLogs() }; showClearLogsDialog = false },
             onDismiss    = { showClearLogsDialog = false }
         )
@@ -208,22 +234,35 @@ fun MainScreen(navController: NavController, dao: AppDao) {
     }
 
     Scaffold(
-        containerColor = AshBlack,
+        containerColor = c.background,
         topBar = {
-            Box(Modifier.fillMaxWidth().background(AshDeep).statusBarsPadding()) {
+            Box(Modifier.fillMaxWidth().background(c.surface).statusBarsPadding()) {
+                // Centered title
                 Column(
                     Modifier
-                        .padding(horizontal = 20.dp, vertical = 5.dp)
-                        .fillMaxWidth(),
+                        .align(Alignment.Center)
+                        .padding(vertical = 12.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-//                    Text(
-//                        "Menu",
-//                        fontSize = 40.sp,
-//                        color    = PhoenixFlameDim,
-//                        textAlign = TextAlign.Center
-//                    )
+
                 }
+                // Theme toggle button (end-aligned)
+                Box(
+                    Modifier
+                        .align(Alignment.CenterEnd)
+                        .padding(end = 14.dp)
+                        .size(36.dp)
+                        .background(PhoenixFlameGhost, PhoenixShapeSmall)
+                        .border(0.5.dp, PhoenixFlame.copy(0.35f), PhoenixShapeSmall)
+                        .clickable { ThemePreference.toggle(context) },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text     = if (isDark) "☀" else "🌙",
+                        fontSize = 16.sp
+                    )
+                }
+                // Bottom accent line
                 Box(
                     Modifier
                         .fillMaxWidth()
@@ -238,7 +277,7 @@ fun MainScreen(navController: NavController, dao: AppDao) {
             }
         },
         bottomBar = {
-            Box(Modifier.fillMaxWidth().background(AshDeep).navigationBarsPadding()) {
+            Box(Modifier.fillMaxWidth().background(c.surface).navigationBarsPadding()) {
                 Box(
                     Modifier.fillMaxWidth().height(1.dp)
                         .background(
@@ -261,8 +300,8 @@ fun MainScreen(navController: NavController, dao: AppDao) {
                             colors   = NavigationBarItemDefaults.colors(
                                 selectedIconColor   = PhoenixFlame,
                                 selectedTextColor   = PhoenixFlame,
-                                unselectedIconColor = AshTextSecondary,
-                                unselectedTextColor = AshTextSecondary,
+                                unselectedIconColor = c.textSecondary,
+                                unselectedTextColor = c.textSecondary,
                                 indicatorColor      = PhoenixFlameGhost
                             )
                         )
@@ -280,7 +319,7 @@ fun MainScreen(navController: NavController, dao: AppDao) {
                     PhoenixFab(
                         onClick            = { showClearLogsDialog = true },
                         icon               = Icons.Default.Delete,
-                        color              = EmberRed,
+                        color              = c.red,
                         contentDescription = "Clear logs"
                     )
                 }
@@ -298,7 +337,7 @@ fun MainScreen(navController: NavController, dao: AppDao) {
             Modifier
                 .padding(padding)
                 .fillMaxSize()
-                .background(AshBlack)
+                .background(c.background)
         ) {
             Column(Modifier.fillMaxSize()) {
                 FirewallStatusCard(
@@ -369,23 +408,20 @@ fun MainScreen(navController: NavController, dao: AppDao) {
 // ── Search field ──────────────────────────────────────────────────────────────
 
 @Composable
-fun PhoenixSearchField(
-    value: String,
-    onValueChange: (String) -> Unit,
-    placeholder: String
-) {
+fun PhoenixSearchField(value: String, onValueChange: (String) -> Unit, placeholder: String) {
+    val c = LocalAppColors.current
     Box(
         Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 8.dp)
-            .background(AshNavy, PhoenixShapeMedium)
-            .border(1.dp, EmberBorderBright.copy(0.4f), PhoenixShapeMedium)
+            .background(c.card, PhoenixShapeMedium)
+            .border(1.dp, c.borderBright.copy(0.4f), PhoenixShapeMedium)
     ) {
         OutlinedTextField(
             value         = value,
             onValueChange = onValueChange,
             modifier      = Modifier.fillMaxWidth(),
-            placeholder   = { Text(placeholder, fontSize = 13.sp, color = AshTextSecondary) },
+            placeholder   = { Text(placeholder, fontSize = 13.sp, color = c.textSecondary) },
             leadingIcon   = {
                 Icon(Icons.Default.Search, null, tint = PhoenixFlame, modifier = Modifier.size(18.dp))
             },
@@ -399,8 +435,8 @@ fun PhoenixSearchField(
             colors = OutlinedTextFieldDefaults.colors(
                 focusedBorderColor   = Color.Transparent,
                 unfocusedBorderColor = Color.Transparent,
-                focusedTextColor     = AshTextPrimary,
-                unfocusedTextColor   = AshTextPrimary,
+                focusedTextColor     = c.textPrimary,
+                unfocusedTextColor   = c.textPrimary,
                 cursorColor          = PhoenixFlame
             ),
             textStyle = LocalTextStyle.current.copy(fontSize = 13.sp)
@@ -412,15 +448,16 @@ fun PhoenixSearchField(
 
 @Composable
 fun FirewallStatusCard(hasEnabledApps: Boolean, onStart: () -> Unit, onStop: () -> Unit) {
-    val isRunning   by VpnTrackerService.isRunning.collectAsState()
-    val borderColor = if (isRunning) PhoenixFlame else EmberBorderMid
+    val c         = LocalAppColors.current
+    val isRunning by VpnTrackerService.isRunning.collectAsState()
+    val border    = if (isRunning) PhoenixFlame else c.borderMid
 
     Box(
         Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 12.dp)
-            .background(AshNavy, PhoenixShapeLarge)
-            .border(1.dp, borderColor.copy(0.4f), PhoenixShapeLarge)
+            .background(c.card, PhoenixShapeLarge)
+            .border(1.dp, border.copy(0.4f), PhoenixShapeLarge)
             .clip(PhoenixShapeLarge)
     ) {
         Row(
@@ -428,12 +465,12 @@ fun FirewallStatusCard(hasEnabledApps: Boolean, onStart: () -> Unit, onStop: () 
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                PulsingDot(if (isRunning) PhoenixFlame else AshTextSecondary, 14.dp)
+                PulsingDot(if (isRunning) PhoenixFlame else c.textSecondary, 14.dp)
                 Spacer(Modifier.height(6.dp))
                 Icon(
                     if (isRunning) Icons.Default.Lock else Icons.Default.LockOpen,
                     null,
-                    tint     = if (isRunning) PhoenixFlame else AshTextSecondary,
+                    tint     = if (isRunning) PhoenixFlame else c.textSecondary,
                     modifier = Modifier.size(22.dp)
                 )
             }
@@ -443,13 +480,13 @@ fun FirewallStatusCard(hasEnabledApps: Boolean, onStart: () -> Unit, onStop: () 
                     if (isRunning) "Firewall Active" else "Firewall Offline",
                     fontWeight = FontWeight.Bold,
                     fontSize   = 16.sp,
-                    color      = if (isRunning) PhoenixFlame else AshTextSecondary
+                    color      = if (isRunning) PhoenixFlame else c.textSecondary
                 )
                 Spacer(Modifier.height(2.dp))
                 Text(
                     if (isRunning) "Monitoring DNS traffic" else "Engine is stopped",
                     fontSize = 12.sp,
-                    color    = if (isRunning) PhoenixFlame.copy(0.65f) else AshTextTertiary
+                    color    = if (isRunning) PhoenixFlame.copy(0.65f) else c.textTertiary
                 )
                 if (!isRunning) {
                     Spacer(Modifier.height(4.dp))
@@ -457,13 +494,13 @@ fun FirewallStatusCard(hasEnabledApps: Boolean, onStart: () -> Unit, onStop: () 
                         if (hasEnabledApps) "Ready to start"
                         else                "No apps enabled — go to Apps tab first",
                         fontSize = 11.sp,
-                        color    = if (hasEnabledApps) EmberGreen.copy(0.7f) else EmberRed.copy(0.8f)
+                        color    = if (hasEnabledApps) c.green.copy(0.8f) else c.red.copy(0.85f)
                     )
                 }
             }
             Spacer(Modifier.width(12.dp))
-            if (isRunning) PhoenixButton("Stop",  EmberRed,   onClick = onStop)
-            else           PhoenixButton("Start", EmberGreen, onClick = onStart)
+            if (isRunning) PhoenixButton("Stop",  c.red,   onClick = onStop)
+            else           PhoenixButton("Start", c.green, onClick = onStart)
         }
     }
 }
@@ -473,6 +510,7 @@ fun FirewallStatusCard(hasEnabledApps: Boolean, onStart: () -> Unit, onStop: () 
 @Composable
 fun AppListItem(app: ApplicationInfo, config: AppConfig?, onClick: () -> Unit) {
     val context   = LocalContext.current
+    val c         = LocalAppColors.current
     val label     = remember(app.packageName) {
         context.packageManager.getApplicationLabel(app).toString()
     }
@@ -491,8 +529,8 @@ fun AppListItem(app: ApplicationInfo, config: AppConfig?, onClick: () -> Unit) {
                 .height(52.dp)
                 .background(
                     Brush.verticalGradient(
-                        if (isEnabled) listOf(PhoenixFlame, EmberGreen)
-                        else           listOf(EmberBorderMid, EmberBorderFaint)
+                        if (isEnabled) listOf(PhoenixFlame, c.green)
+                        else           listOf(c.borderMid, c.borderFaint)
                     ),
                     RoundedCornerShape(2.dp)
                 )
@@ -501,10 +539,10 @@ fun AppListItem(app: ApplicationInfo, config: AppConfig?, onClick: () -> Unit) {
         Box(
             Modifier
                 .size(38.dp)
-                .background(AshSlate, PhoenixShapeSmall)
+                .background(c.cardAlt, PhoenixShapeSmall)
                 .border(
                     0.5.dp,
-                    if (isEnabled) PhoenixFlame.copy(0.3f) else EmberBorderMid,
+                    if (isEnabled) PhoenixFlame.copy(0.3f) else c.borderMid,
                     PhoenixShapeSmall
                 )
                 .clip(PhoenixShapeSmall)
@@ -517,7 +555,7 @@ fun AppListItem(app: ApplicationInfo, config: AppConfig?, onClick: () -> Unit) {
                 label,
                 fontWeight = FontWeight.SemiBold,
                 fontSize   = 14.sp,
-                color      = AshTextPrimary,
+                color      = c.textPrimary,
                 maxLines   = 1,
                 overflow   = TextOverflow.Ellipsis
             )
@@ -525,7 +563,7 @@ fun AppListItem(app: ApplicationInfo, config: AppConfig?, onClick: () -> Unit) {
                 app.packageName,
                 fontFamily = FontFamily.Monospace,
                 fontSize   = 9.sp,
-                color      = AshTextSecondary,
+                color      = c.textSecondary,
                 maxLines   = 1,
                 overflow   = TextOverflow.Ellipsis
             )
@@ -534,18 +572,14 @@ fun AppListItem(app: ApplicationInfo, config: AppConfig?, onClick: () -> Unit) {
             EmberChip("Active", PhoenixFlame)
             Spacer(Modifier.width(8.dp))
         }
-        Icon(
-            Icons.Default.ChevronRight, null,
-            tint     = EmberBorderBright,
-            modifier = Modifier.size(16.dp)
-        )
+        Icon(Icons.Default.ChevronRight, null, tint = c.borderBright, modifier = Modifier.size(16.dp))
     }
     Box(
         Modifier
             .fillMaxWidth()
             .padding(start = 31.dp)
             .height(0.5.dp)
-            .background(EmberBorderFaint)
+            .background(c.borderFaint)
     )
 }
 
@@ -566,38 +600,34 @@ fun AppIconImage(packageName: String, modifier: Modifier = Modifier) {
 
 @Composable
 fun FilterModeCard(currentMode: FilterMode, onModeChange: (FilterMode) -> Unit) {
+    val c = LocalAppColors.current
     Box(
         Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 8.dp)
-            .background(AshNavy, PhoenixShapeMedium)
+            .background(c.card, PhoenixShapeMedium)
             .border(1.dp, PhoenixFlame.copy(0.25f), PhoenixShapeMedium)
             .padding(16.dp)
     ) {
         Column {
-            Text(
-                "Filter Mode",
-                fontWeight = FontWeight.SemiBold,
-                fontSize   = 13.sp,
-                color      = PhoenixFlame
-            )
+            Text("Filter Mode", fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = PhoenixFlame)
             Spacer(Modifier.height(10.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 listOf(
-                    FilterMode.BLACKLIST to EmberRed,
-                    FilterMode.WHITELIST to EmberGreen
+                    FilterMode.BLACKLIST to c.red,
+                    FilterMode.WHITELIST to c.green
                 ).forEach { (mode, color) ->
                     val selected = currentMode == mode
                     Box(
                         Modifier
                             .weight(1f)
                             .background(
-                                if (selected) color.copy(0.12f) else AshSlate,
+                                if (selected) color.copy(0.12f) else c.cardAlt,
                                 PhoenixShapeSmall
                             )
                             .border(
                                 1.dp,
-                                if (selected) color.copy(0.6f) else EmberBorderMid,
+                                if (selected) color.copy(0.6f) else c.borderMid,
                                 PhoenixShapeSmall
                             )
                             .clickable { onModeChange(mode) }
@@ -608,13 +638,13 @@ fun FilterModeCard(currentMode: FilterMode, onModeChange: (FilterMode) -> Unit) 
                                 mode.name.lowercase().replaceFirstChar { it.uppercase() },
                                 fontWeight = FontWeight.Bold,
                                 fontSize   = 12.sp,
-                                color      = if (selected) color else AshTextSecondary
+                                color      = if (selected) color else c.textSecondary
                             )
                             Text(
                                 if (mode == FilterMode.BLACKLIST) "Block matched, allow rest"
                                 else                               "Allow matched, block rest",
                                 fontSize = 10.sp,
-                                color    = if (selected) color.copy(0.6f) else AshTextTertiary
+                                color    = if (selected) color.copy(0.6f) else c.textTertiary
                             )
                         }
                     }
@@ -627,7 +657,7 @@ fun FilterModeCard(currentMode: FilterMode, onModeChange: (FilterMode) -> Unit) 
                 else
                     "All traffic is denied unless matched by an allow rule",
                 fontSize = 10.sp,
-                color    = AshTextSecondary.copy(0.7f)
+                color    = c.textSecondary.copy(0.7f)
             )
         }
     }
@@ -661,11 +691,12 @@ fun GlobalRulesTab(
 
 @Composable
 fun RulesListContent(rules: List<FilterRule>, dao: AppDao, scope: CoroutineScope) {
+    val c = LocalAppColors.current
     LazyColumn {
         val allow = rules.filter { it.action == RuleAction.ALLOW }
         val block  = rules.filter { it.action == RuleAction.BLOCK }
         if (allow.isNotEmpty()) {
-            item { PhoenixSectionHeader("Allow List", EmberGreen) }
+            item { PhoenixSectionHeader("Allow List", c.green) }
             items(allow, key = { it.id }) { rule ->
                 RuleItem(rule,
                     onDelete = { scope.launch { dao.deleteRule(rule) } },
@@ -673,7 +704,7 @@ fun RulesListContent(rules: List<FilterRule>, dao: AppDao, scope: CoroutineScope
             }
         }
         if (block.isNotEmpty()) {
-            item { PhoenixSectionHeader("Block List", EmberRed) }
+            item { PhoenixSectionHeader("Block List", c.red) }
             items(block, key = { it.id }) { rule ->
                 RuleItem(rule,
                     onDelete = { scope.launch { dao.deleteRule(rule) } },
@@ -694,35 +725,23 @@ fun GlobalLogList(
     scope: CoroutineScope
 ) {
     if (logs.isEmpty()) {
-        PhoenixEmptyState(
-            Icons.Default.List,
-            "No DNS history yet\nStart the firewall to begin monitoring"
-        )
+        PhoenixEmptyState(Icons.Default.List, "No DNS history yet\nStart the firewall to begin monitoring")
         return
     }
     LazyColumn {
         items(logs, key = { it.id }) { log ->
             val blocked = log.isBlocked || isEffectivelyBlocked(log.domain, globalRules, filterMode)
-            LogItemExtended(
-                log, blocked, filterMode,
+            LogItemExtended(log, blocked, filterMode,
                 onBlock = {
                     scope.launch {
-                        dao.insertRule(FilterRule(
-                            packageName = null,
-                            pattern     = log.domain,
-                            matchType   = MatchType.SUBDOMAIN,
-                            action      = RuleAction.BLOCK
-                        ))
+                        dao.insertRule(FilterRule(packageName = null, pattern = log.domain,
+                            matchType = MatchType.SUBDOMAIN, action = RuleAction.BLOCK))
                     }
                 },
                 onAllow = {
                     scope.launch {
-                        dao.insertRule(FilterRule(
-                            packageName = null,
-                            pattern     = log.domain,
-                            matchType   = MatchType.SUBDOMAIN,
-                            action      = RuleAction.ALLOW
-                        ))
+                        dao.insertRule(FilterRule(packageName = null, pattern = log.domain,
+                            matchType = MatchType.SUBDOMAIN, action = RuleAction.ALLOW))
                     }
                 }
             )
@@ -740,35 +759,24 @@ fun AppTrafficList(
     scope: CoroutineScope
 ) {
     if (logs.isEmpty()) {
-        PhoenixEmptyState(
-            Icons.Default.Info,
-            "No DNS activity yet\nEnable firewall for this app\nthen start the engine"
-        )
+        PhoenixEmptyState(Icons.Default.Info,
+            "No DNS activity yet\nEnable firewall for this app\nthen start the engine")
         return
     }
     LazyColumn {
         items(logs, key = { it.id }) { log ->
             val blocked = log.isBlocked || isEffectivelyBlocked(log.domain, allRules, filterMode)
-            LogItemExtended(
-                log, blocked, filterMode,
+            LogItemExtended(log, blocked, filterMode,
                 onBlock = {
                     scope.launch {
-                        dao.insertRule(FilterRule(
-                            packageName = packageName,
-                            pattern     = log.domain,
-                            matchType   = MatchType.SUBDOMAIN,
-                            action      = RuleAction.BLOCK
-                        ))
+                        dao.insertRule(FilterRule(packageName = packageName, pattern = log.domain,
+                            matchType = MatchType.SUBDOMAIN, action = RuleAction.BLOCK))
                     }
                 },
                 onAllow = {
                     scope.launch {
-                        dao.insertRule(FilterRule(
-                            packageName = packageName,
-                            pattern     = log.domain,
-                            matchType   = MatchType.SUBDOMAIN,
-                            action      = RuleAction.ALLOW
-                        ))
+                        dao.insertRule(FilterRule(packageName = packageName, pattern = log.domain,
+                            matchType = MatchType.SUBDOMAIN, action = RuleAction.ALLOW))
                     }
                 }
             )
@@ -788,16 +796,15 @@ fun LogItemExtended(
     onBlock: () -> Unit,
     onAllow: () -> Unit
 ) {
+    val c = LocalAppColors.current
     val accentColor = when {
-        isBlocked                          -> EmberRed
-        filterMode == FilterMode.WHITELIST -> EmberGreen
-        else                               -> EmberBorderMid
+        isBlocked                          -> c.red
+        filterMode == FilterMode.WHITELIST -> c.green
+        else                               -> c.borderMid
     }
 
     Row(
-        Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 2.dp),
+        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 2.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(
@@ -805,56 +812,36 @@ fun LogItemExtended(
                 .width(2.dp)
                 .height(44.dp)
                 .background(
-                    accentColor.copy(
-                        if (isBlocked || filterMode == FilterMode.WHITELIST) 0.8f else 0.2f
-                    ),
+                    accentColor.copy(if (isBlocked || filterMode == FilterMode.WHITELIST) 0.8f else 0.2f),
                     RoundedCornerShape(1.dp)
                 )
         )
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
-            Text(
-                log.domain,
-                fontFamily = FontFamily.Monospace,
-                fontWeight = FontWeight.Medium,
-                fontSize   = 12.sp,
-                color      = AshTextPrimary,
-                maxLines   = 1,
-                overflow   = TextOverflow.Ellipsis
-            )
+            Text(log.domain, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Medium,
+                fontSize = 12.sp, color = c.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(
                 remember(log.timestamp) { logDateFormat.format(Date(log.timestamp)) },
-                fontFamily = FontFamily.Monospace,
-                fontSize   = 9.sp,
-                color      = AshTextSecondary
+                fontFamily = FontFamily.Monospace, fontSize = 9.sp, color = c.textSecondary
             )
         }
         Spacer(Modifier.width(8.dp))
         when {
-            isBlocked && filterMode == FilterMode.WHITELIST ->
-                EmberTextButton("Allow", EmberGreen, onAllow)
-            isBlocked ->
-                EmberChip("Blocked", EmberRed)
-            filterMode == FilterMode.WHITELIST ->
-                EmberChip("Allowed", EmberGreen)
-            else ->
-                EmberTextButton("Block", EmberRed, onBlock)
+            isBlocked && filterMode == FilterMode.WHITELIST -> EmberTextButton("Allow", c.green, onAllow)
+            isBlocked                                       -> EmberChip("Blocked", c.red)
+            filterMode == FilterMode.WHITELIST              -> EmberChip("Allowed", c.green)
+            else                                            -> EmberTextButton("Block", c.red, onBlock)
         }
     }
-    Box(
-        Modifier
-            .fillMaxWidth()
-            .padding(start = 30.dp)
-            .height(0.5.dp)
-            .background(EmberBorderFaint)
-    )
+    Box(Modifier.fillMaxWidth().padding(start = 30.dp).height(0.5.dp).background(c.borderFaint))
 }
 
 // ── Rule item ─────────────────────────────────────────────────────────────────
 
 @Composable
 fun RuleItem(rule: FilterRule, onDelete: () -> Unit, onToggle: (Boolean) -> Unit) {
-    val color = if (rule.action == RuleAction.BLOCK) EmberRed else EmberGreen
+    val c     = LocalAppColors.current
+    val color = if (rule.action == RuleAction.BLOCK) c.red else c.green
 
     Row(
         Modifier
@@ -867,58 +854,35 @@ fun RuleItem(rule: FilterRule, onDelete: () -> Unit, onToggle: (Boolean) -> Unit
             Modifier
                 .width(2.dp)
                 .height(50.dp)
-                .background(
-                    color.copy(if (rule.isEnabled) 0.8f else 0.3f),
-                    RoundedCornerShape(1.dp)
-                )
+                .background(color.copy(if (rule.isEnabled) 0.8f else 0.3f), RoundedCornerShape(1.dp))
         )
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 EmberChip(rule.matchType.displayName(), color)
                 Spacer(Modifier.width(8.dp))
-                Text(
-                    rule.pattern,
-                    fontFamily = FontFamily.Monospace,
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize   = 12.sp,
-                    color      = AshTextPrimary,
-                    maxLines   = 1,
-                    overflow   = TextOverflow.Ellipsis
-                )
+                Text(rule.pattern, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.SemiBold,
+                    fontSize = 12.sp, color = c.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             Spacer(Modifier.height(2.dp))
-            Text(
-                "${if (rule.action == RuleAction.BLOCK) "Block" else "Allow"} · ${rule.matchType.description()}",
-                fontSize = 10.sp,
-                color    = AshTextSecondary
-            )
+            Text("${if (rule.action == RuleAction.BLOCK) "Block" else "Allow"} · ${rule.matchType.description()}",
+                fontSize = 10.sp, color = c.textSecondary)
         }
         Switch(
             checked         = rule.isEnabled,
             onCheckedChange = onToggle,
             colors = SwitchDefaults.colors(
-                checkedThumbColor   = VoidBlack,
+                checkedThumbColor   = c.void,
                 checkedTrackColor   = color.copy(0.8f),
-                uncheckedThumbColor = AshTextTertiary,
-                uncheckedTrackColor = AshSlate
+                uncheckedThumbColor = c.textTertiary,
+                uncheckedTrackColor = c.cardAlt
             )
         )
         IconButton(onClick = onDelete, modifier = Modifier.size(36.dp)) {
-            Icon(
-                Icons.Default.Delete, "Delete",
-                tint     = EmberRed.copy(0.6f),
-                modifier = Modifier.size(16.dp)
-            )
+            Icon(Icons.Default.Delete, "Delete", tint = c.red.copy(0.6f), modifier = Modifier.size(16.dp))
         }
     }
-    Box(
-        Modifier
-            .fillMaxWidth()
-            .padding(start = 30.dp)
-            .height(0.5.dp)
-            .background(EmberBorderFaint)
-    )
+    Box(Modifier.fillMaxWidth().padding(start = 30.dp).height(0.5.dp).background(c.borderFaint))
 }
 
 // ── App detail screen ─────────────────────────────────────────────────────────
@@ -928,6 +892,7 @@ fun RuleItem(rule: FilterRule, onDelete: () -> Unit, onToggle: (Boolean) -> Unit
 fun AppDetailScreen(navController: NavController, dao: AppDao, packageName: String) {
     val context = LocalContext.current
     val scope   = rememberCoroutineScope()
+    val c       = LocalAppColors.current
 
     var navigatingBack by remember { mutableStateOf(false) }
     val onBack: () -> Unit = {
@@ -974,16 +939,16 @@ fun AppDetailScreen(navController: NavController, dao: AppDao, packageName: Stri
             title        = "Clear Logs",
             text         = "All DNS activity logs will be permanently deleted.",
             confirmText  = "Clear",
-            confirmColor = EmberRed,
+            confirmColor = c.red,
             onConfirm    = { scope.launch { dao.clearLogs() }; showClearLogsDialog = false },
             onDismiss    = { showClearLogsDialog = false }
         )
     }
 
     Scaffold(
-        containerColor = AshBlack,
+        containerColor = c.background,
         topBar = {
-            Box(Modifier.fillMaxWidth().background(AshDeep).statusBarsPadding()) {
+            Box(Modifier.fillMaxWidth().background(c.surface).statusBarsPadding()) {
                 Row(
                     Modifier.padding(horizontal = 4.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically
@@ -994,7 +959,7 @@ fun AppDetailScreen(navController: NavController, dao: AppDao, packageName: Stri
                     Box(
                         Modifier
                             .size(32.dp)
-                            .background(AshSlate, PhoenixShapeSmall)
+                            .background(c.cardAlt, PhoenixShapeSmall)
                             .border(0.5.dp, PhoenixFlame.copy(0.3f), PhoenixShapeSmall)
                             .clip(PhoenixShapeSmall)
                     ) {
@@ -1002,22 +967,10 @@ fun AppDetailScreen(navController: NavController, dao: AppDao, packageName: Stri
                     }
                     Spacer(Modifier.width(10.dp))
                     Column {
-                        Text(
-                            label,
-                            fontWeight = FontWeight.Bold,
-                            fontSize   = 15.sp,
-                            color      = PhoenixFlame,
-                            maxLines   = 1,
-                            overflow   = TextOverflow.Ellipsis
-                        )
-                        Text(
-                            packageName,
-                            fontFamily = FontFamily.Monospace,
-                            fontSize   = 9.sp,
-                            color      = AshTextSecondary,
-                            maxLines   = 1,
-                            overflow   = TextOverflow.Ellipsis
-                        )
+                        Text(label, fontWeight = FontWeight.Bold, fontSize = 15.sp, color = PhoenixFlame,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(packageName, fontFamily = FontFamily.Monospace, fontSize = 9.sp,
+                            color = c.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
                 Box(
@@ -1035,24 +988,12 @@ fun AppDetailScreen(navController: NavController, dao: AppDao, packageName: Stri
         },
         floatingActionButton = {
             when (selectedSection) {
-                0 -> AnimatedVisibility(
-                    allLogs.isNotEmpty(),
-                    enter = scaleIn() + fadeIn(),
-                    exit  = scaleOut() + fadeOut()
-                ) {
-                    PhoenixFab(
-                        onClick            = { showClearLogsDialog = true },
-                        icon               = Icons.Default.Delete,
-                        color              = EmberRed,
-                        contentDescription = "Clear logs"
-                    )
+                0 -> AnimatedVisibility(allLogs.isNotEmpty(), enter = scaleIn() + fadeIn(), exit = scaleOut() + fadeOut()) {
+                    PhoenixFab(onClick = { showClearLogsDialog = true },
+                        icon = Icons.Default.Delete, color = c.red, contentDescription = "Clear logs")
                 }
-                1 -> PhoenixFab(
-                    onClick            = { showAddRuleDialog = true },
-                    icon               = Icons.Default.Add,
-                    color              = PhoenixFlame,
-                    contentDescription = "Add rule"
-                )
+                1 -> PhoenixFab(onClick = { showAddRuleDialog = true },
+                    icon = Icons.Default.Add, color = PhoenixFlame, contentDescription = "Add rule")
                 else -> {}
             }
         }
@@ -1061,39 +1002,32 @@ fun AppDetailScreen(navController: NavController, dao: AppDao, packageName: Stri
             Modifier
                 .padding(padding)
                 .fillMaxSize()
-                .background(AshBlack)
+                .background(c.background)
         ) {
-            // Firewall toggle
+            // Firewall toggle card
             Box(
                 Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 12.dp)
-                    .background(AshNavy, PhoenixShapeMedium)
+                    .background(c.card, PhoenixShapeMedium)
                     .border(
                         1.dp,
-                        if (appConfig?.isFilteringEnabled == true) EmberGreen.copy(0.35f)
-                        else EmberBorderMid,
+                        if (appConfig?.isFilteringEnabled == true) c.green.copy(0.35f) else c.borderMid,
                         PhoenixShapeMedium
                     )
                     .padding(horizontal = 16.dp, vertical = 12.dp)
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
-                        Text(
-                            "Firewall Intercept",
-                            fontWeight = FontWeight.Bold,
-                            fontSize   = 14.sp,
-                            color      = PhoenixFlame
-                        )
+                        Text("Firewall Intercept", fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp, color = PhoenixFlame)
                         Spacer(Modifier.height(2.dp))
                         Text(
-                            if (appConfig?.isFilteringEnabled == true)
-                                "DNS filtering is active"
-                            else
-                                "App bypasses the firewall",
+                            if (appConfig?.isFilteringEnabled == true) "DNS filtering is active"
+                            else "App bypasses the firewall",
                             fontSize = 11.sp,
-                            color    = if (appConfig?.isFilteringEnabled == true)
-                                EmberGreen.copy(0.7f) else AshTextSecondary
+                            color    = if (appConfig?.isFilteringEnabled == true) c.green.copy(0.8f)
+                            else c.textSecondary
                         )
                     }
                     Switch(
@@ -1102,10 +1036,10 @@ fun AppDetailScreen(navController: NavController, dao: AppDao, packageName: Stri
                             scope.launch { dao.insertAppConfig(AppConfig(packageName, label, enabled)) }
                         },
                         colors = SwitchDefaults.colors(
-                            checkedThumbColor   = VoidBlack,
-                            checkedTrackColor   = EmberGreen.copy(0.8f),
-                            uncheckedThumbColor = AshTextTertiary,
-                            uncheckedTrackColor = AshSlate
+                            checkedThumbColor   = c.void,
+                            checkedTrackColor   = c.green.copy(0.8f),
+                            uncheckedThumbColor = c.textTertiary,
+                            uncheckedTrackColor = c.cardAlt
                         )
                     )
                 }
@@ -1116,8 +1050,8 @@ fun AppDetailScreen(navController: NavController, dao: AppDao, packageName: Stri
                 Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp)
-                    .background(AshNavy, PhoenixShapeSmall)
-                    .border(1.dp, EmberBorderMid, PhoenixShapeSmall)
+                    .background(c.card, PhoenixShapeSmall)
+                    .border(1.dp, c.borderMid, PhoenixShapeSmall)
                     .padding(4.dp)
             ) {
                 listOf("DNS Activity", "App Rules").forEachIndexed { idx, tabLabel ->
@@ -1140,12 +1074,8 @@ fun AppDetailScreen(navController: NavController, dao: AppDao, packageName: Stri
                             .padding(vertical = 8.dp),
                         contentAlignment = Alignment.Center
                     ) {
-                        Text(
-                            display,
-                            fontWeight = FontWeight.SemiBold,
-                            fontSize   = 12.sp,
-                            color      = if (selected) PhoenixFlame else AshTextSecondary
-                        )
+                        Text(display, fontWeight = FontWeight.SemiBold, fontSize = 12.sp,
+                            color = if (selected) PhoenixFlame else c.textSecondary)
                     }
                 }
             }
@@ -1154,12 +1084,9 @@ fun AppDetailScreen(navController: NavController, dao: AppDao, packageName: Stri
             if (selectedSection == 0) {
                 PhoenixSearchField(logSearchQuery, { logSearchQuery = it }, "Search domains...")
                 if (logSearchQuery.isNotBlank()) {
-                    Text(
-                        "${filteredLogs.size} of ${allLogs.size} results",
-                        fontSize = 11.sp,
-                        color    = PhoenixFlameDim,
-                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 2.dp)
-                    )
+                    Text("${filteredLogs.size} of ${allLogs.size} results",
+                        fontSize = 11.sp, color = PhoenixFlameDim,
+                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 2.dp))
                 }
                 AppTrafficList(filteredLogs, combinedRules, filterMode, packageName, dao, scope)
             } else {
@@ -1172,44 +1099,34 @@ fun AppDetailScreen(navController: NavController, dao: AppDao, packageName: Stri
 // ── App rules list ────────────────────────────────────────────────────────────
 
 @Composable
-fun AppRulesList(
-    rules: List<FilterRule>,
-    appLabel: String,
-    globalCount: Int,
-    dao: AppDao,
-    scope: CoroutineScope
-) {
+fun AppRulesList(rules: List<FilterRule>, appLabel: String, globalCount: Int, dao: AppDao, scope: CoroutineScope) {
+    val c = LocalAppColors.current
     Column(Modifier.fillMaxSize()) {
         if (globalCount > 0) {
             Row(
                 Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 6.dp)
-                    .background(PhoenixGoldGhost, PhoenixShapeSmall)
-                    .border(1.dp, PhoenixGold.copy(0.25f), PhoenixShapeSmall)
+                    .background(c.goldGhost, PhoenixShapeSmall)
+                    .border(1.dp, c.gold.copy(0.25f), PhoenixShapeSmall)
                     .padding(10.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(Icons.Default.Info, null, Modifier.size(14.dp), tint = PhoenixGold)
+                Icon(Icons.Default.Info, null, Modifier.size(14.dp), tint = c.gold)
                 Spacer(Modifier.width(8.dp))
-                Text(
-                    "$globalCount global rule${if (globalCount != 1) "s" else ""} also apply to this app",
-                    fontSize = 11.sp,
-                    color    = PhoenixGold.copy(0.85f)
-                )
+                Text("$globalCount global rule${if (globalCount != 1) "s" else ""} also apply to this app",
+                    fontSize = 11.sp, color = c.gold.copy(0.9f))
             }
         }
         if (rules.isEmpty()) {
-            PhoenixEmptyState(
-                Icons.Default.Lock,
-                "No app-specific rules\nTap + to add one\nor tap Block in DNS Activity"
-            )
+            PhoenixEmptyState(Icons.Default.Lock,
+                "No app-specific rules\nTap + to add one\nor tap Block in DNS Activity")
         } else {
             LazyColumn(Modifier.weight(1f)) {
                 val allow = rules.filter { it.action == RuleAction.ALLOW }
                 val block  = rules.filter { it.action == RuleAction.BLOCK }
                 if (allow.isNotEmpty()) {
-                    item { PhoenixSectionHeader("Allow Rules", EmberGreen) }
+                    item { PhoenixSectionHeader("Allow Rules", c.green) }
                     items(allow, key = { it.id }) { rule ->
                         RuleItem(rule,
                             onDelete = { scope.launch { dao.deleteRule(rule) } },
@@ -1217,7 +1134,7 @@ fun AppRulesList(
                     }
                 }
                 if (block.isNotEmpty()) {
-                    item { PhoenixSectionHeader("Block Rules", EmberRed) }
+                    item { PhoenixSectionHeader("Block Rules", c.red) }
                     items(block, key = { it.id }) { rule ->
                         RuleItem(rule,
                             onDelete = { scope.launch { dao.deleteRule(rule) } },
@@ -1239,6 +1156,7 @@ fun AddRuleDialog(
     onDismiss: () -> Unit,
     onAdd: (FilterRule) -> Unit
 ) {
+    val c = LocalAppColors.current
     var pattern      by remember { mutableStateOf("") }
     var matchType    by remember { mutableStateOf(MatchType.SUBDOMAIN) }
     var action       by remember { mutableStateOf(initialAction) }
@@ -1247,27 +1165,25 @@ fun AddRuleDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        containerColor   = AshDeep,
+        containerColor   = c.surface,
         tonalElevation   = 0.dp,
         shape            = PhoenixShapeLarge,
-        title = {
-            Text(title, fontWeight = FontWeight.Bold, color = PhoenixFlame)
-        },
+        title = { Text(title, fontWeight = FontWeight.Bold, color = PhoenixFlame) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf(RuleAction.BLOCK to EmberRed, RuleAction.ALLOW to EmberGreen)
+                    listOf(RuleAction.BLOCK to c.red, RuleAction.ALLOW to c.green)
                         .forEach { (a, color) ->
                             Box(
                                 Modifier
                                     .weight(1f)
                                     .background(
-                                        if (action == a) color.copy(0.12f) else AshNavy,
+                                        if (action == a) color.copy(0.12f) else c.card,
                                         PhoenixShapeSmall
                                     )
                                     .border(
                                         1.dp,
-                                        if (action == a) color.copy(0.7f) else EmberBorderMid,
+                                        if (action == a) color.copy(0.7f) else c.borderMid,
                                         PhoenixShapeSmall
                                     )
                                     .clickable { action = a }
@@ -1276,9 +1192,8 @@ fun AddRuleDialog(
                             ) {
                                 Text(
                                     a.name.lowercase().replaceFirstChar { it.uppercase() },
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize   = 12.sp,
-                                    color      = if (action == a) color else AshTextSecondary
+                                    fontWeight = FontWeight.Bold, fontSize = 12.sp,
+                                    color = if (action == a) color else c.textSecondary
                                 )
                             }
                         }
@@ -1290,25 +1205,20 @@ fun AddRuleDialog(
                     modifier      = Modifier.fillMaxWidth(),
                     label         = { Text("Pattern", fontSize = 12.sp) },
                     placeholder   = {
-                        Text(
-                            "example.com",
-                            fontFamily = FontFamily.Monospace,
-                            fontSize   = 12.sp,
-                            color      = AshTextTertiary
-                        )
+                        Text("example.com", fontFamily = FontFamily.Monospace,
+                            fontSize = 12.sp, color = c.textTertiary)
                     },
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedBorderColor   = PhoenixFlame.copy(0.6f),
-                        unfocusedBorderColor = EmberBorderMid,
-                        focusedTextColor     = AshTextPrimary,
-                        unfocusedTextColor   = AshTextPrimary,
+                        unfocusedBorderColor = c.borderMid,
+                        focusedTextColor     = c.textPrimary,
+                        unfocusedTextColor   = c.textPrimary,
                         cursorColor          = PhoenixFlame,
                         focusedLabelColor    = PhoenixFlame,
-                        unfocusedLabelColor  = AshTextSecondary
+                        unfocusedLabelColor  = c.textSecondary
                     ),
                     textStyle = LocalTextStyle.current.copy(
-                        fontFamily = FontFamily.Monospace,
-                        fontSize   = 13.sp
+                        fontFamily = FontFamily.Monospace, fontSize = 13.sp
                     )
                 )
                 ExposedDropdownMenuBox(
@@ -1324,38 +1234,30 @@ fun AddRuleDialog(
                         trailingIcon  = { ExposedDropdownMenuDefaults.TrailingIcon(menuExpanded) },
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedBorderColor   = PhoenixFlame.copy(0.6f),
-                            unfocusedBorderColor = EmberBorderMid,
-                            focusedTextColor     = AshTextPrimary,
-                            unfocusedTextColor   = AshTextPrimary,
+                            unfocusedBorderColor = c.borderMid,
+                            focusedTextColor     = c.textPrimary,
+                            unfocusedTextColor   = c.textPrimary,
                             focusedLabelColor    = PhoenixFlame,
-                            unfocusedLabelColor  = AshTextSecondary
+                            unfocusedLabelColor  = c.textSecondary
                         ),
                         textStyle = LocalTextStyle.current.copy(fontSize = 12.sp)
                     )
                     ExposedDropdownMenu(
                         expanded         = menuExpanded,
                         onDismissRequest = { menuExpanded = false },
-                        modifier         = Modifier.background(AshNavy)
+                        modifier         = Modifier.background(c.card)
                     ) {
                         MatchType.values().forEach { type ->
                             DropdownMenuItem(
                                 text = {
                                     Column {
-                                        Text(
-                                            type.displayName(),
-                                            fontWeight = FontWeight.SemiBold,
-                                            fontSize   = 13.sp,
-                                            color      = PhoenixFlame
-                                        )
-                                        Text(
-                                            type.description(),
-                                            fontSize = 11.sp,
-                                            color    = AshTextSecondary
-                                        )
+                                        Text(type.displayName(), fontWeight = FontWeight.SemiBold,
+                                            fontSize = 13.sp, color = PhoenixFlame)
+                                        Text(type.description(), fontSize = 11.sp, color = c.textSecondary)
                                     }
                                 },
                                 onClick = { matchType = type; menuExpanded = false },
-                                colors  = MenuDefaults.itemColors(textColor = AshTextPrimary)
+                                colors  = MenuDefaults.itemColors(textColor = c.textPrimary)
                             )
                         }
                     }
@@ -1363,24 +1265,20 @@ fun AddRuleDialog(
             }
         },
         confirmButton = {
-            val btnColor = if (action == RuleAction.BLOCK) EmberRed else EmberGreen
+            val btnColor = if (action == RuleAction.BLOCK) c.red else c.green
             PhoenixButton(
                 text    = if (action == RuleAction.BLOCK) "Block" else "Allow",
                 color   = btnColor,
                 enabled = trimmed.isNotBlank(),
                 onClick = {
-                    onAdd(FilterRule(
-                        packageName = null,
-                        pattern     = trimmed,
-                        matchType   = matchType,
-                        action      = action
-                    ))
+                    onAdd(FilterRule(packageName = null, pattern = trimmed,
+                        matchType = matchType, action = action))
                     onDismiss()
                 }
             )
         },
         dismissButton = {
-            PhoenixButton("Cancel", AshTextSecondary, onClick = onDismiss)
+            PhoenixButton("Cancel", c.textSecondary, onClick = onDismiss)
         }
     )
 }
@@ -1389,34 +1287,26 @@ fun AddRuleDialog(
 
 @Composable
 fun PhoenixAlertDialog(
-    title: String,
-    text: String,
-    confirmText: String,
-    confirmColor: Color,
-    onConfirm: () -> Unit,
-    onDismiss: () -> Unit
+    title: String, text: String, confirmText: String,
+    confirmColor: Color, onConfirm: () -> Unit, onDismiss: () -> Unit
 ) {
+    val c = LocalAppColors.current
     AlertDialog(
         onDismissRequest = onDismiss,
-        containerColor   = AshDeep,
+        containerColor   = c.surface,
         tonalElevation   = 0.dp,
         shape            = PhoenixShapeLarge,
-        title = { Text(title, fontWeight = FontWeight.Bold, color = confirmColor) },
-        text  = { Text(text, fontSize = 13.sp, color = AshTextSecondary) },
+        title  = { Text(title, fontWeight = FontWeight.Bold, color = confirmColor) },
+        text   = { Text(text, fontSize = 13.sp, color = c.textSecondary) },
         confirmButton = { PhoenixButton(confirmText, confirmColor, onClick = onConfirm) },
-        dismissButton = { PhoenixButton("Cancel", AshTextSecondary, onClick = onDismiss) }
+        dismissButton = { PhoenixButton("Cancel", c.textSecondary, onClick = onDismiss) }
     )
 }
 
 // ── Primitive components ──────────────────────────────────────────────────────
 
 @Composable
-fun PhoenixButton(
-    text: String,
-    color: Color,
-    onClick: () -> Unit,
-    enabled: Boolean = true
-) {
+fun PhoenixButton(text: String, color: Color, onClick: () -> Unit, enabled: Boolean = true) {
     Box(
         Modifier
             .alpha(if (enabled) 1f else 0.4f)
@@ -1426,12 +1316,8 @@ fun PhoenixButton(
             .padding(horizontal = 16.dp, vertical = 8.dp),
         contentAlignment = Alignment.Center
     ) {
-        Text(
-            text,
-            fontWeight = FontWeight.SemiBold,
-            fontSize   = 12.sp,
-            color      = color.copy(if (enabled) 1f else 0.4f)
-        )
+        Text(text, fontWeight = FontWeight.SemiBold, fontSize = 12.sp,
+            color = color.copy(if (enabled) 1f else 0.4f))
     }
 }
 
@@ -1467,10 +1353,8 @@ fun PhoenixFab(
 }
 
 @Composable
-fun PhoenixEmptyState(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    message: String
-) {
+fun PhoenixEmptyState(icon: androidx.compose.ui.graphics.vector.ImageVector, message: String) {
+    val c = LocalAppColors.current
     Column(
         Modifier.fillMaxSize().padding(40.dp),
         verticalArrangement = Arrangement.Center,
@@ -1478,12 +1362,7 @@ fun PhoenixEmptyState(
     ) {
         Icon(icon, null, Modifier.size(52.dp), tint = PhoenixFlame.copy(0.15f))
         Spacer(Modifier.height(20.dp))
-        Text(
-            message,
-            textAlign  = TextAlign.Center,
-            fontSize   = 13.sp,
-            lineHeight = 20.sp,
-            color      = AshTextSecondary.copy(0.7f)
-        )
+        Text(message, textAlign = TextAlign.Center, fontSize = 13.sp,
+            lineHeight = 20.sp, color = c.textSecondary.copy(0.7f))
     }
 }
