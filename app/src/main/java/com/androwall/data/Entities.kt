@@ -26,13 +26,8 @@ data class ConnectionLog(
     val isBlocked: Boolean
 )
 
-// ── Rule system ───────────────────────────────────────────────────────────────
-
-enum class FilterMode { BLACKLIST, WHITELIST }
-enum class RuleAction  { BLOCK, ALLOW }
-
 enum class MatchType {
-    EXACT, SUBDOMAIN, CONTAINS, PREFIX, SUFFIX;
+    EXACT, SUBDOMAIN, CONTAINS, PREFIX, SUFFIX, WILDCARD;
 
     fun displayName() = when (this) {
         EXACT     -> "Exact"
@@ -40,23 +35,29 @@ enum class MatchType {
         CONTAINS  -> "Contains"
         PREFIX    -> "Prefix"
         SUFFIX    -> "Suffix"
+        WILDCARD  -> "Wildcard *"
     }
 
     fun description() = when (this) {
-        EXACT     -> "exact domain only"
-        SUBDOMAIN -> "domain + all subdomains"
-        CONTAINS  -> "keyword anywhere in domain"
-        PREFIX    -> "domain starts with pattern"
-        SUFFIX    -> "domain ends with pattern"
+        EXACT     -> "domain.com only"
+        SUBDOMAIN -> "domain.com + *.domain.com"
+        CONTAINS  -> "any domain with this text"
+        PREFIX    -> "domains starting with"
+        SUFFIX    -> "domains ending with"
+        WILDCARD  -> "use * for any sequence"
     }
 }
+
+enum class RuleAction { BLOCK, ALLOW }
+
+enum class FilterMode { BLACKLIST, WHITELIST }
 
 @Entity(tableName = "filter_rules")
 data class FilterRule(
     @PrimaryKey(autoGenerate = true) val id: Int = 0,
-    val packageName: String?,          // null = global
+    val packageName: String?,
     val pattern: String,
     val matchType: MatchType = MatchType.SUBDOMAIN,
-    val action: RuleAction  = RuleAction.BLOCK,
-    val isEnabled: Boolean  = true
+    val action: RuleAction = RuleAction.BLOCK,
+    val isEnabled: Boolean = true
 )

@@ -14,7 +14,7 @@ interface AppDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAppConfig(config: AppConfig)
 
-    // ── Blocked domains (legacy fallback) ─────────────────────────────────────
+    // ── Blocked domains (legacy) ──────────────────────────────────────────────
     @Query("SELECT * FROM blocked_domains WHERE packageName = :packageName OR packageName IS NULL")
     fun getBlockedDomains(packageName: String?): Flow<List<BlockedDomain>>
 
@@ -40,15 +40,21 @@ interface AppDao {
     @Query("SELECT * FROM filter_rules WHERE packageName = :packageName ORDER BY action ASC")
     fun getAppRules(packageName: String): Flow<List<FilterRule>>
 
+    // App-specific rules first (packageName NOT NULL), then global, both id ASC
+    // firstOrNull() in the VPN engine will always evaluate app rules before global rules
     @Query("""
-    SELECT * FROM filter_rules 
-    ORDER BY 
-        CASE WHEN packageName IS NULL THEN 1 ELSE 0 END ASC,
-        id ASC
-""")
+        SELECT * FROM filter_rules
+        ORDER BY
+            CASE WHEN packageName IS NULL THEN 1 ELSE 0 END ASC,
+            id ASC
+    """)
     fun getAllRules(): Flow<List<FilterRule>>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertRule(rule: FilterRule)
+
+    @Update
+    suspend fun updateRule(rule: FilterRule)
 
     @Delete
     suspend fun deleteRule(rule: FilterRule)
@@ -88,17 +94,17 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "androwall_db"
                 )
-                    .fallbackToDestructiveMigration()   // drops & recreates on schema bump
+                    .fallbackToDestructiveMigration()
                     .build()
                     .also { INSTANCE = it }
             }
     }
 }
 
-/** Room type converters for enum columns. */
 class RoomConverters {
     @TypeConverter fun matchTypeToString(v: MatchType): String = v.name
-    @TypeConverter fun stringToMatchType(v: String): MatchType = MatchType.valueOf(v)
+    @TypeConverter fun stringToMatchType(v: String): MatchType =
+        runCatching { MatchType.valueOf(v) }.getOrDefault(MatchType.SUBDOMAIN)
     @TypeConverter fun ruleActionToString(v: RuleAction): String = v.name
     @TypeConverter fun stringToRuleAction(v: String): RuleAction = RuleAction.valueOf(v)
 }
