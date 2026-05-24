@@ -265,7 +265,7 @@ fun MainScreen(navController: NavController, dao: AppDao) {
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("AndroWall", fontWeight = FontWeight.Bold, fontSize = 18.sp, color = PhoenixFlame)
+                    Text("", fontWeight = FontWeight.Bold, fontSize = 18.sp, color = PhoenixFlame)
                     IconButton(
                         onClick = { ThemePreference.toggle(context) },
                         modifier = Modifier.size(36.dp)
@@ -668,8 +668,8 @@ fun GlobalRulesTab(
             PhoenixEmptyState(
                 Icons.Default.Lock,
                 if (filterMode == FilterMode.BLACKLIST)
-                    "No block rules defined\nAll traffic is permitted\nTap + to add a rule"
-                else "No allow rules defined\nAll traffic is blocked\nTap + to add a rule"
+                    "No block rules defined"
+                else "No allow rules defined"
             )
         } else {
             RulesListContent(rules, dao, scope)

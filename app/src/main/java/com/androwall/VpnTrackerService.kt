@@ -477,8 +477,8 @@ class VpnTrackerService : VpnService() {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle(if (running) "ANDROWALL  //  ACTIVE" else "ANDROWALL  //  STANDBY")
             .setContentText(
-                if (running) "DNS intercept active — shield protecting"
-                else         "Engine offline — tap START to protect"
+                if (running) "interception online"
+                else         "Engine offline — tap START to activate"
             )
             .setSmallIcon(R.drawable.ic_shield)
             .setOngoing(true)                       // disables swipe on API < 34
