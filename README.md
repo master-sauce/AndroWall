@@ -13,7 +13,7 @@ AndroWall is a comprehensive Android firewall application that gives you granula
 - **Dark/Light theme support**: Customize the appearance to your preference
 - **Privacy-focused**: No telemetry or user data collection
 - **Open source**: Full transparency with auditable code
-- **no root**: no root is reqired
+- **no root**: no root is required
 
 ## Purpose & Use Cases
 
