@@ -40,7 +40,7 @@ By preventing unnecessary background connections, AndroWall helps reduce data us
 
 ### Getting Started
 
-1. **Install AndroWall apk** from the releases tag
+1. **Install apk**: Install the apk from the releases tag
 2. **Grant permissions**: When first launched, AndroWall will request VPN permission and notification permissions
 3. **Enable apps**: Navigate to the Apps tab and toggle on filtering for applications you want to protect
 4. **Choose mode**: Choose whitelist or blacklist mode for you prefrence (defualt is blacklist) 
