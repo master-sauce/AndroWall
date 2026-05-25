@@ -76,9 +76,6 @@ View connection logs in the app to:
 
 As an open source project, AndroWall welcomes contributions from the security community. Whether you're reporting bugs, suggesting features, or submitting code, your input helps improve privacy for everyone.
 
-## License
-
-AndroWall is released under the MIT license, allowing for free use, modification, and distribution while preserving the original copyright notice.
 
 ---
 
