@@ -17,37 +17,47 @@ data class BlockedDomain(
     val domain: String
 )
 
-enum class ConnectionType { DNS, HTTP, HTTPS }
-
 @Entity(tableName = "connection_logs")
 data class ConnectionLog(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val packageName: String,
     val domain: String,
-    val url: String? = null,                             // HTTP: full URL · HTTPS: https://host · DNS: null
-    val connectionType: ConnectionType = ConnectionType.DNS,
     val timestamp: Long = System.currentTimeMillis(),
     val isBlocked: Boolean
 )
 
 enum class MatchType {
-    EXACT, SUBDOMAIN, CONTAINS, PREFIX, SUFFIX, WILDCARD
+    EXACT, SUBDOMAIN, CONTAINS, PREFIX, SUFFIX, WILDCARD;
+
+    fun displayName() = when (this) {
+        EXACT     -> "Exact"
+        SUBDOMAIN -> "Subdomain"
+        CONTAINS  -> "Contains"
+        PREFIX    -> "Prefix"
+        SUFFIX    -> "Suffix"
+        WILDCARD  -> "Wildcard *"
+    }
+
+    fun description() = when (this) {
+        EXACT     -> "domain.com only"
+        SUBDOMAIN -> "domain.com + *.domain.com"
+        CONTAINS  -> "any domain with this text"
+        PREFIX    -> "domains starting with"
+        SUFFIX    -> "domains ending with"
+        WILDCARD  -> "use * for any sequence"
+    }
 }
 
 enum class RuleAction { BLOCK, ALLOW }
 
 enum class FilterMode { BLACKLIST, WHITELIST }
 
-/** DNS = match against resolved domain only · URL = match against full URL / SNI · ANY = both */
-enum class RuleScope { DNS, URL, ANY }
-
 @Entity(tableName = "filter_rules")
 data class FilterRule(
     @PrimaryKey(autoGenerate = true) val id: Int = 0,
     val packageName: String?,
     val pattern: String,
-    val matchType: MatchType   = MatchType.SUBDOMAIN,
-    val action: RuleAction     = RuleAction.BLOCK,
-    val isEnabled: Boolean     = true,
-    val scope: RuleScope       = RuleScope.ANY
+    val matchType: MatchType = MatchType.SUBDOMAIN,
+    val action: RuleAction = RuleAction.BLOCK,
+    val isEnabled: Boolean = true
 )

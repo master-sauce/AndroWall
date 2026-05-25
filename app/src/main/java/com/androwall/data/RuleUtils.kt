@@ -1,85 +1,48 @@
 package com.androwall.data
 
 /**
- * BLACKLIST: allow all except BLOCK-matched.  ALLOW rules are whitelist exceptions.
- * WHITELIST: block all except ALLOW-matched.  BLOCK rules can further restrict.
+ * BLACKLIST mode: allow all except BLOCK-matched. ALLOW rules are whitelist exceptions inside that.
+ * WHITELIST mode: block all except ALLOW-matched. BLOCK rules can further restrict allowed domains.
  *
- * Scope:
- *   DNS → match target is domain name only
- *   URL → match target is full URL (http://host/path) or https://host
- *   ANY → match against both domain and URL
+ * Priority: in BLACKLIST → ALLOW beats BLOCK. In WHITELIST → BLOCK beats ALLOW.
  */
-
-// ── DNS matching ──────────────────────────────────────────────────────────────
-
 fun isEffectivelyBlocked(
     domain: String,
     rules: List<FilterRule>,
     mode: FilterMode = FilterMode.BLACKLIST
 ): Boolean {
     val lower  = domain.lowercase()
-    val active = rules.filter { it.isEnabled && (it.scope == RuleScope.DNS || it.scope == RuleScope.ANY) }
+    val active = rules.filter { it.isEnabled }
 
-    val hasAllow = active.filter { it.action == RuleAction.ALLOW }
+    val hasAllowMatch = active.filter { it.action == RuleAction.ALLOW }
         .any { ruleMatches(lower, it.pattern.lowercase(), it.matchType) }
-    val hasBlock = active.filter { it.action == RuleAction.BLOCK }
+
+    val hasBlockMatch = active.filter { it.action == RuleAction.BLOCK }
         .any { ruleMatches(lower, it.pattern.lowercase(), it.matchType) }
 
     return when (mode) {
-        FilterMode.BLACKLIST -> if (hasAllow) false else hasBlock
-        FilterMode.WHITELIST -> if (hasBlock) true  else !hasAllow
+        FilterMode.BLACKLIST -> if (hasAllowMatch) false else hasBlockMatch
+        FilterMode.WHITELIST -> if (hasBlockMatch) true  else !hasAllowMatch
     }
 }
 
-// ── URL / SNI matching ────────────────────────────────────────────────────────
-
-fun isEffectivelyBlockedForUrl(
-    host: String,
-    url: String?,
-    rules: List<FilterRule>,
-    mode: FilterMode = FilterMode.BLACKLIST
-): Boolean {
-    val hostLower = host.lowercase()
-    val urlLower  = url?.lowercase()
-    val active    = rules.filter { it.isEnabled }
-
-    fun matches(rule: FilterRule): Boolean {
-        val p = rule.pattern.lowercase()
-        return when (rule.scope) {
-            RuleScope.DNS -> ruleMatches(hostLower, p, rule.matchType)
-            RuleScope.URL -> urlLower != null && ruleMatches(urlLower, p, rule.matchType)
-            RuleScope.ANY ->
-                ruleMatches(hostLower, p, rule.matchType) ||
-                        (urlLower != null && ruleMatches(urlLower, p, rule.matchType))
-        }
-    }
-
-    val hasAllow = active.filter { it.action == RuleAction.ALLOW }.any { matches(it) }
-    val hasBlock = active.filter { it.action == RuleAction.BLOCK }.any { matches(it) }
-
-    return when (mode) {
-        FilterMode.BLACKLIST -> if (hasAllow) false else hasBlock
-        FilterMode.WHITELIST -> if (hasBlock) true  else !hasAllow
-    }
+fun ruleMatches(domain: String, pattern: String, type: MatchType): Boolean = when (type) {
+    MatchType.EXACT     -> domain == pattern
+    MatchType.SUBDOMAIN -> domain == pattern || domain.endsWith(".$pattern")
+    MatchType.PREFIX    -> domain.startsWith(pattern)
+    MatchType.SUFFIX    -> domain.endsWith(pattern)
+    MatchType.CONTAINS  -> domain.contains(pattern)
+    MatchType.WILDCARD  -> wildcardMatch(pattern, domain)
 }
 
-// ── Rule matching ─────────────────────────────────────────────────────────────
-
-fun ruleMatches(target: String, pattern: String, type: MatchType): Boolean = when (type) {
-    MatchType.EXACT     -> target == pattern
-    MatchType.SUBDOMAIN -> target == pattern || target.endsWith(".$pattern")
-    MatchType.PREFIX    -> target.startsWith(pattern)
-    MatchType.SUFFIX    -> target.endsWith(pattern)
-    MatchType.CONTAINS  -> target.contains(pattern)
-    MatchType.WILDCARD  -> wildcardMatch(pattern, target)
-}
-
+/** Converts a glob-style * pattern to a regex and tests the input. */
 fun wildcardMatch(pattern: String, input: String): Boolean {
-    val regex = pattern.split("*").joinToString(".*") { Regex.escape(it) }
-    return Regex("^$regex$").matches(input)
+    val regexStr = pattern.split("*").joinToString(".*") { Regex.escape(it) }
+    return Regex("^$regexStr$").matches(input)
 }
 
-// ── MatchType display helpers ─────────────────────────────────────────────────
+// ── MatchType extensions ──────────────────────────────────────────────────────
+// Note: keep in sync with Entities.kt enum — do not duplicate displayName/description there.
 
 fun MatchType.displayName(): String = when (this) {
     MatchType.EXACT     -> "Exact"
@@ -93,8 +56,8 @@ fun MatchType.displayName(): String = when (this) {
 fun MatchType.description(): String = when (this) {
     MatchType.EXACT     -> "Exact domain only"
     MatchType.SUBDOMAIN -> "Domain + all subdomains"
-    MatchType.PREFIX    -> "Domains / URLs starting with…"
-    MatchType.SUFFIX    -> "Domains / URLs ending with…"
-    MatchType.CONTAINS  -> "Domains / URLs containing…"
+    MatchType.PREFIX    -> "Domains starting with…"
+    MatchType.SUFFIX    -> "Domains ending with…"
+    MatchType.CONTAINS  -> "Domains containing…"
     MatchType.WILDCARD  -> "Use * for any sequence of chars"
 }

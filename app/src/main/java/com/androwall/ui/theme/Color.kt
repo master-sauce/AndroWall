@@ -56,20 +56,3 @@ val LightTextTertiary  = Color(0xFFB5A89E)
 val LightBorderFaint  = Color(0xFFE5DDD5)
 val LightBorderMid    = Color(0xFFCFC5BB)
 val LightBorderBright = Color(0xFFB8ADA0)
-
-
-
-// ── Ash light backgrounds ─────────────────────────────────────────────────────
-val AshLightBg          = Color(0xFFFAF8F5)
-val AshLightSurface     = Color(0xFFF0EDE8)
-val AshLightCard        = Color(0xFFE8E4DE)
-
-// ── Light text tones ──────────────────────────────────────────────────────────
-val AshLightTextPri     = Color(0xFF1A1510)
-val AshLightTextSec     = Color(0xFF5C5040)
-val AshLightTextTer     = Color(0xFF8C8070)
-
-// ── Light borders ─────────────────────────────────────────────────────────────
-val AshLightBorder      = Color(0xFFD4CCC0)
-val AshLightBorderFaint = Color(0xFFE8E2D8)
-val AshLightBorderBright = Color(0xFFB8A890)

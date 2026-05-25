@@ -37,8 +37,6 @@ class VpnTrackerService : VpnService() {
     // Pre-filtered to isEnabled — updated reactively from DB
     @Volatile private var cachedRules: List<FilterRule> = emptyList()
 
-    enum class TrafficScope { DNS_ONLY, HTTP_ONLY, ALL }
-
     companion object {
         private const val TAG        = "AndroWall"
         private const val CHANNEL_ID = "vpn_channel"
@@ -47,7 +45,6 @@ class VpnTrackerService : VpnService() {
         private const val DNS_PORT   = 53
         private const val PREFS_NAME = "androwall_prefs"
         private const val KEY_MODE   = "filter_mode"
-        private const val KEY_SCOPE  = "traffic_scope"
 
         const val ACTION_START_VPN    = "com.androwall.ACTION_START_VPN"
         const val ACTION_STOP_VPN     = "com.androwall.ACTION_STOP_VPN"
@@ -63,31 +60,17 @@ class VpnTrackerService : VpnService() {
         private val _filterMode = MutableStateFlow(FilterMode.BLACKLIST)
         val filterMode: StateFlow<FilterMode> = _filterMode
 
-        private val _trafficScope = MutableStateFlow(TrafficScope.ALL)
-        val trafficScope: StateFlow<TrafficScope> = _trafficScope
-
         fun loadPersistedMode(context: Context) {
-            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            
-            val rawMode = prefs.getString(KEY_MODE, FilterMode.BLACKLIST.name) ?: FilterMode.BLACKLIST.name
-            _filterMode.value = runCatching { FilterMode.valueOf(rawMode) }
+            val raw = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .getString(KEY_MODE, FilterMode.BLACKLIST.name) ?: FilterMode.BLACKLIST.name
+            _filterMode.value = runCatching { FilterMode.valueOf(raw) }
                 .getOrDefault(FilterMode.BLACKLIST)
-
-            val rawScope = prefs.getString(KEY_SCOPE, TrafficScope.ALL.name) ?: TrafficScope.ALL.name
-            _trafficScope.value = runCatching { TrafficScope.valueOf(rawScope) }
-                .getOrDefault(TrafficScope.ALL)
         }
 
         fun setFilterMode(context: Context, mode: FilterMode) {
             _filterMode.value = mode
             context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 .edit().putString(KEY_MODE, mode.name).apply()
-        }
-
-        fun setTrafficScope(context: Context, scope: TrafficScope) {
-            _trafficScope.value = scope
-            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                .edit().putString(KEY_SCOPE, scope.name).apply()
         }
     }
 
@@ -477,8 +460,8 @@ class VpnTrackerService : VpnService() {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle(if (running) "ANDROWALL  //  ACTIVE" else "ANDROWALL  //  STANDBY")
             .setContentText(
-                if (running) "interception online"
-                else         "Engine offline — tap START to activate"
+                if (running) "DNS interception online"
+                else         "Engine offline tap START"
             )
             .setSmallIcon(R.drawable.ic_shield)
             .setOngoing(true)                       // disables swipe on API < 34
