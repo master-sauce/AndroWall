@@ -15,6 +15,8 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -199,6 +201,7 @@ fun MainScreen(navController: NavController, dao: AppDao) {
     val recentLogs  by dao.getRecentLogs().collectAsState(initial = emptyList())
     val globalRules by dao.getGlobalRules().collectAsState(initial = emptyList())
     val filterMode  by VpnTrackerService.filterMode.collectAsState()
+    val isRunning   by VpnTrackerService.isRunning.collectAsState()
 
     var installedApps           by remember { mutableStateOf<List<ApplicationInfo>>(emptyList()) }
     var searchQuery             by remember { mutableStateOf("") }
@@ -208,6 +211,23 @@ fun MainScreen(navController: NavController, dao: AppDao) {
     var toastMessage            by remember { mutableStateOf("") }
     var showClearLogsDialog     by remember { mutableStateOf(false) }
     var showAddGlobalRuleDialog by remember { mutableStateOf(false) }
+
+    // ── Pending changes tracking (for Rules tab) ────────────────────────────
+    var pendingChangesCount by remember { mutableIntStateOf(0) }
+    val incrementChanges: () -> Unit = { pendingChangesCount++ }
+    val clearChanges:     () -> Unit = { pendingChangesCount = 0 }
+
+    val performApply: () -> Unit = {
+        clearChanges()
+        // Only restart if the service is currently active; don't start a stopped service
+        if (isRunning) {
+            context.startService(
+                Intent(context, VpnTrackerService::class.java)
+                    .apply { action = VpnTrackerService.ACTION_STOP_VPN }
+            )
+            context.startService(Intent(context, VpnTrackerService::class.java))
+        }
+    }
 
     val notifLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
     val vpnLauncher   = rememberLauncherForActivityResult(
@@ -263,7 +283,10 @@ fun MainScreen(navController: NavController, dao: AppDao) {
             title = "Add Global Rule",
             initialAction = if (filterMode == FilterMode.WHITELIST) RuleAction.ALLOW else RuleAction.BLOCK,
             onDismiss = { showAddGlobalRuleDialog = false },
-            onAdd = { rule -> scope.launch { dao.insertRule(rule.copy(packageName = null)) } }
+            onAdd = { rule ->
+                scope.launch { dao.insertRule(rule.copy(packageName = null)) }
+                incrementChanges()
+            }
         )
     }
 
@@ -378,10 +401,17 @@ fun MainScreen(navController: NavController, dao: AppDao) {
                                 fontSize = 11.sp, color = PhoenixFlameDim,
                                 modifier = Modifier.padding(horizontal = 20.dp, vertical = 2.dp))
                         }
-                        GlobalLogList(filteredLogs, globalRules, filterMode, dao, scope)
+                        GlobalLogList(filteredLogs, globalRules, filterMode, dao, scope, incrementChanges)
                     }
-                    2 -> GlobalRulesTab(globalRules, filterMode, context, dao, scope)
+                    2 -> GlobalRulesTab(globalRules, filterMode, context, dao, scope, incrementChanges)
                 }
+
+                // ── Save & Apply bar ──────────────────────────────────────
+                SaveApplyBar(
+                    onChangeCount = pendingChangesCount,
+                    onSaveApply   = performApply,
+                    modifier      = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                )
             }
 
             FireToastCard(
@@ -574,23 +604,24 @@ fun FilterModeCard(currentMode: FilterMode, onModeChange: (FilterMode) -> Unit) 
 @Composable
 fun GlobalRulesTab(
     rules: List<FilterRule>, filterMode: FilterMode,
-    context: android.content.Context, dao: AppDao, scope: CoroutineScope
+    context: android.content.Context, dao: AppDao, scope: CoroutineScope,
+    onChanged: () -> Unit = {}
 ) {
     Column(Modifier.fillMaxSize()) {
-        FilterModeCard(filterMode) { VpnTrackerService.setFilterMode(context, it) }
+        FilterModeCard(filterMode) { VpnTrackerService.setFilterMode(context, it); onChanged() }
         if (rules.isEmpty()) {
             PhoenixEmptyState(Icons.Default.Lock,
                 if (filterMode == FilterMode.BLACKLIST)
                     "No block rules defined\nAll traffic is permitted\nTap + to add a rule"
                 else "No allow rules defined\nAll traffic is blocked\nTap + to add a rule")
         } else {
-            RulesListContent(rules, dao, scope)
+            RulesListContent(rules, dao, scope, onChanged)
         }
     }
 }
 
 @Composable
-fun RulesListContent(rules: List<FilterRule>, dao: AppDao, scope: CoroutineScope) {
+fun RulesListContent(rules: List<FilterRule>, dao: AppDao, scope: CoroutineScope, onChanged: () -> Unit = {}) {
     val c = LocalAppColors.current
     LazyColumn {
         val allow = rules.filter { it.action == RuleAction.ALLOW }
@@ -599,18 +630,20 @@ fun RulesListContent(rules: List<FilterRule>, dao: AppDao, scope: CoroutineScope
             item { PhoenixSectionHeader("Allow List", c.green) }
             items(allow, key = { it.id }) { rule ->
                 RuleItem(rule,
-                    onDelete = { scope.launch { dao.deleteRule(rule) } },
-                    onToggle = { scope.launch { dao.setRuleEnabled(rule.id, it) } },
-                    onEdit   = { updated -> scope.launch { dao.updateRule(updated) } })
+                    onDelete  = { scope.launch { dao.deleteRule(rule) } },
+                    onToggle  = { scope.launch { dao.setRuleEnabled(rule.id, it) } },
+                    onEdit    = { updated -> scope.launch { dao.updateRule(updated) } },
+                    onChanged = onChanged)
             }
         }
         if (block.isNotEmpty()) {
             item { PhoenixSectionHeader("Block List", c.red) }
             items(block, key = { it.id }) { rule ->
                 RuleItem(rule,
-                    onDelete = { scope.launch { dao.deleteRule(rule) } },
-                    onToggle = { scope.launch { dao.setRuleEnabled(rule.id, it) } },
-                    onEdit   = { updated -> scope.launch { dao.updateRule(updated) } })
+                    onDelete  = { scope.launch { dao.deleteRule(rule) } },
+                    onToggle  = { scope.launch { dao.setRuleEnabled(rule.id, it) } },
+                    onEdit    = { updated -> scope.launch { dao.updateRule(updated) } },
+                    onChanged = onChanged)
             }
         }
     }
@@ -621,7 +654,8 @@ fun RulesListContent(rules: List<FilterRule>, dao: AppDao, scope: CoroutineScope
 @Composable
 fun GlobalLogList(
     logs: List<ConnectionLog>, globalRules: List<FilterRule>,
-    filterMode: FilterMode, dao: AppDao, scope: CoroutineScope
+    filterMode: FilterMode, dao: AppDao, scope: CoroutineScope,
+    onChanged: () -> Unit = {}
 ) {
     if (logs.isEmpty()) {
         PhoenixEmptyState(Icons.Default.List, "No DNS history yet\nStart the firewall to begin monitoring")
@@ -633,7 +667,8 @@ fun GlobalLogList(
                 log        = log,
                 rules      = globalRules,
                 filterMode = filterMode,
-                onAddRule  = { rule -> scope.launch { dao.insertRule(rule.copy(packageName = null)) } }
+                onAddRule  = { rule -> scope.launch { dao.insertRule(rule.copy(packageName = null)) } },
+                onChanged  = onChanged
             )
         }
     }
@@ -642,7 +677,8 @@ fun GlobalLogList(
 @Composable
 fun AppTrafficList(
     logs: List<ConnectionLog>, allRules: List<FilterRule>,
-    filterMode: FilterMode, packageName: String, dao: AppDao, scope: CoroutineScope
+    filterMode: FilterMode, packageName: String, dao: AppDao, scope: CoroutineScope,
+    onChanged: () -> Unit = {}
 ) {
     if (logs.isEmpty()) {
         PhoenixEmptyState(Icons.Default.Info,
@@ -655,7 +691,8 @@ fun AppTrafficList(
                 log        = log,
                 rules      = allRules,
                 filterMode = filterMode,
-                onAddRule  = { rule -> scope.launch { dao.insertRule(rule.copy(packageName = packageName)) } }
+                onAddRule  = { rule -> scope.launch { dao.insertRule(rule.copy(packageName = packageName)) } },
+                onChanged  = onChanged
             )
         }
     }
@@ -672,7 +709,8 @@ fun LogItemExtended(
     log: ConnectionLog,
     rules: List<FilterRule>,
     filterMode: FilterMode,
-    onAddRule: (FilterRule) -> Unit
+    onAddRule: (FilterRule) -> Unit,
+    onChanged: () -> Unit = {}
 ) {
     val c = LocalAppColors.current
 
@@ -688,7 +726,7 @@ fun LogItemExtended(
             initialMatchType = MatchType.SUBDOMAIN,
             initialAction  = if (filterMode == FilterMode.WHITELIST) RuleAction.ALLOW else RuleAction.BLOCK,
             onDismiss      = { showAddDialog = false },
-            onAdd          = { rule -> onAddRule(rule) }
+            onAdd          = { rule -> onAddRule(rule); onChanged() }
         )
     }
 
@@ -728,7 +766,8 @@ fun RuleItem(
     rule: FilterRule,
     onDelete: () -> Unit,
     onToggle: (Boolean) -> Unit,
-    onEdit: (FilterRule) -> Unit
+    onEdit: (FilterRule) -> Unit,
+    onChanged: () -> Unit = {}
 ) {
     val c     = LocalAppColors.current
     val color = if (rule.action == RuleAction.BLOCK) c.red else c.green
@@ -745,6 +784,7 @@ fun RuleItem(
             onAdd            = { updated ->
                 // Preserve id, packageName, isEnabled from the original rule
                 onEdit(updated.copy(id = rule.id, packageName = rule.packageName, isEnabled = rule.isEnabled))
+                onChanged()
             }
         )
     }
@@ -769,7 +809,7 @@ fun RuleItem(
                 fontSize = 10.sp, color = c.textSecondary)
         }
         Switch(
-            checked = rule.isEnabled, onCheckedChange = onToggle,
+            checked = rule.isEnabled, onCheckedChange = { onToggle(it); onChanged() },
             colors = SwitchDefaults.colors(
                 checkedThumbColor = c.void, checkedTrackColor = color.copy(0.8f),
                 uncheckedThumbColor = c.textTertiary, uncheckedTrackColor = c.cardAlt
@@ -780,7 +820,7 @@ fun RuleItem(
             Icon(Icons.Default.Edit, "Edit", tint = PhoenixFlame.copy(0.6f), modifier = Modifier.size(16.dp))
         }
         // Delete
-        IconButton(onClick = onDelete, modifier = Modifier.size(36.dp)) {
+        IconButton(onClick = { onDelete(); onChanged() }, modifier = Modifier.size(36.dp)) {
             Icon(Icons.Default.Delete, "Delete", tint = c.red.copy(0.6f), modifier = Modifier.size(16.dp))
         }
     }
@@ -796,11 +836,31 @@ fun AppDetailScreen(navController: NavController, dao: AppDao, packageName: Stri
     val scope   = rememberCoroutineScope()
     val c       = LocalAppColors.current
 
-    var navigatingBack by remember { mutableStateOf(false) }
-    val onBack: () -> Unit = {
-        if (!navigatingBack) { navigatingBack = true; navController.popBackStack() }
+    // ── Pending changes tracking ─────────────────────────────────────────────
+    var pendingChangesCount by remember { mutableIntStateOf(0) }
+    var showUnsavedDialog   by remember { mutableStateOf(false) }
+    val isRunning           by VpnTrackerService.isRunning.collectAsState()
+
+    val incrementChanges: () -> Unit = { pendingChangesCount++ }
+    val clearChanges:     () -> Unit = { pendingChangesCount = 0 }
+
+    val performApply: () -> Unit = {
+        clearChanges()
+        if (isRunning) {
+            context.startService(
+                Intent(context, VpnTrackerService::class.java)
+                    .apply { action = VpnTrackerService.ACTION_STOP_VPN }
+            )
+            context.startService(Intent(context, VpnTrackerService::class.java))
+        }
     }
-    BackHandler(onBack = onBack)
+
+    val handleBackRequest: () -> Unit = {
+        if (pendingChangesCount > 0) showUnsavedDialog = true
+        else navController.popBackStack()
+    }
+
+    BackHandler(onBack = handleBackRequest)
 
     val label = remember(packageName) {
         try {
@@ -828,12 +888,30 @@ fun AppDetailScreen(navController: NavController, dao: AppDao, packageName: Stri
         else allLogs.filter { it.domain.contains(logSearchQuery, ignoreCase = true) }
     }
 
+    // ── Unsaved changes dialog ──────────────────────────────────────────────
+    if (showUnsavedDialog) {
+        UnsavedChangesDialog(
+            onDiscard = {
+                clearChanges()
+                navController.popBackStack()
+            },
+            onSave = {
+                performApply()
+                navController.popBackStack()
+            },
+            onDismiss = { showUnsavedDialog = false }
+        )
+    }
+
     if (showAddRuleDialog) {
         AddRuleDialog(
             title = "Add Rule — $label",
             initialAction = if (filterMode == FilterMode.WHITELIST) RuleAction.ALLOW else RuleAction.BLOCK,
             onDismiss = { showAddRuleDialog = false },
-            onAdd = { rule -> scope.launch { dao.insertRule(rule.copy(packageName = packageName)) } }
+            onAdd = { rule ->
+                scope.launch { dao.insertRule(rule.copy(packageName = packageName)) }
+                incrementChanges()
+            }
         )
     }
     if (showClearLogsDialog) {
@@ -850,7 +928,7 @@ fun AppDetailScreen(navController: NavController, dao: AppDao, packageName: Stri
         topBar = {
             Box(Modifier.fillMaxWidth().background(c.surface).statusBarsPadding()) {
                 Row(Modifier.padding(horizontal = 4.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, "Back", tint = PhoenixFlame) }
+                    IconButton(onClick = handleBackRequest) { Icon(Icons.Default.ArrowBack, "Back", tint = PhoenixFlame) }
                     Box(
                         Modifier.size(32.dp).background(c.cardAlt, PhoenixShapeSmall)
                             .border(0.5.dp, PhoenixFlame.copy(0.3f), PhoenixShapeSmall).clip(PhoenixShapeSmall)
@@ -880,7 +958,9 @@ fun AppDetailScreen(navController: NavController, dao: AppDao, packageName: Stri
             }
         }
     ) { padding ->
-        Column(Modifier.padding(padding).fillMaxSize().background(c.background)) {
+        Column(
+            Modifier.padding(padding).fillMaxSize().background(c.background)
+        ) {
             // Firewall toggle
             Box(
                 Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)
@@ -905,6 +985,7 @@ fun AppDetailScreen(navController: NavController, dao: AppDao, packageName: Stri
                         checked = appConfig?.isFilteringEnabled ?: false,
                         onCheckedChange = { enabled ->
                             scope.launch { dao.insertAppConfig(AppConfig(packageName, label, enabled)) }
+                            incrementChanges()
                         },
                         colors = SwitchDefaults.colors(
                             checkedThumbColor = c.void, checkedTrackColor = c.green.copy(0.8f),
@@ -938,17 +1019,28 @@ fun AppDetailScreen(navController: NavController, dao: AppDao, packageName: Stri
             }
             Spacer(Modifier.height(4.dp))
 
-            if (selectedSection == 0) {
-                PhoenixSearchField(logSearchQuery, { logSearchQuery = it }, "Search domains...")
-                if (logSearchQuery.isNotBlank()) {
-                    Text("${filteredLogs.size} of ${allLogs.size} results",
-                        fontSize = 11.sp, color = PhoenixFlameDim,
-                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 2.dp))
+            Box(Modifier.weight(1f)) {
+                if (selectedSection == 0) {
+                    Column(Modifier.fillMaxSize()) {
+                        PhoenixSearchField(logSearchQuery, { logSearchQuery = it }, "Search domains...")
+                        if (logSearchQuery.isNotBlank()) {
+                            Text("${filteredLogs.size} of ${allLogs.size} results",
+                                fontSize = 11.sp, color = PhoenixFlameDim,
+                                modifier = Modifier.padding(horizontal = 20.dp, vertical = 2.dp))
+                        }
+                        AppTrafficList(filteredLogs, combinedRules, filterMode, packageName, dao, scope, incrementChanges)
+                    }
+                } else {
+                    AppRulesList(appRules, label, globalRules.size, dao, scope, incrementChanges)
                 }
-                AppTrafficList(filteredLogs, combinedRules, filterMode, packageName, dao, scope)
-            } else {
-                AppRulesList(appRules, label, globalRules.size, dao, scope)
             }
+
+            // ── Save & Apply bar ──────────────────────────────────────────
+            SaveApplyBar(
+                onChangeCount = pendingChangesCount,
+                onSaveApply   = performApply,
+                modifier      = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+            )
         }
     }
 }
@@ -956,7 +1048,7 @@ fun AppDetailScreen(navController: NavController, dao: AppDao, packageName: Stri
 // ── App rules list ────────────────────────────────────────────────────────────
 
 @Composable
-fun AppRulesList(rules: List<FilterRule>, appLabel: String, globalCount: Int, dao: AppDao, scope: CoroutineScope) {
+fun AppRulesList(rules: List<FilterRule>, appLabel: String, globalCount: Int, dao: AppDao, scope: CoroutineScope, onChanged: () -> Unit = {}) {
     val c = LocalAppColors.current
     Column(Modifier.fillMaxSize()) {
         if (globalCount > 0) {
@@ -983,18 +1075,22 @@ fun AppRulesList(rules: List<FilterRule>, appLabel: String, globalCount: Int, da
                     item { PhoenixSectionHeader("Allow Rules", c.green) }
                     items(allow, key = { it.id }) { rule ->
                         RuleItem(rule,
-                            onDelete = { scope.launch { dao.deleteRule(rule) } },
-                            onToggle = { scope.launch { dao.setRuleEnabled(rule.id, it) } },
-                            onEdit   = { updated -> scope.launch { dao.updateRule(updated) } })
+                            onDelete  = { scope.launch { dao.deleteRule(rule) } },
+                            onToggle  = { scope.launch { dao.setRuleEnabled(rule.id, it) } },
+                            onEdit    = { updated -> scope.launch { dao.updateRule(updated) } },
+                            onChanged = onChanged)
+
                     }
                 }
                 if (block.isNotEmpty()) {
                     item { PhoenixSectionHeader("Block Rules", c.red) }
                     items(block, key = { it.id }) { rule ->
                         RuleItem(rule,
-                            onDelete = { scope.launch { dao.deleteRule(rule) } },
-                            onToggle = { scope.launch { dao.setRuleEnabled(rule.id, it) } },
-                            onEdit   = { updated -> scope.launch { dao.updateRule(updated) } })
+                            onDelete  = { scope.launch { dao.deleteRule(rule) } },
+                            onToggle  = { scope.launch { dao.setRuleEnabled(rule.id, it) } },
+                            onEdit    = { updated -> scope.launch { dao.updateRule(updated) } },
+                            onChanged = onChanged)
+
                     }
                 }
             }
@@ -1228,5 +1324,97 @@ fun PhoenixEmptyState(icon: androidx.compose.ui.graphics.vector.ImageVector, mes
         Spacer(Modifier.height(20.dp))
         Text(message, textAlign = TextAlign.Center, fontSize = 13.sp,
             lineHeight = 20.sp, color = c.textSecondary.copy(0.7f))
+    }
+}
+
+// ── Unsaved changes confirmation dialog ─────────────────────────────────────
+
+@Composable
+fun UnsavedChangesDialog(
+    onDiscard: () -> Unit,
+    onSave: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val c = LocalAppColors.current
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor   = c.surface,
+        tonalElevation   = 0.dp,
+        shape            = PhoenixShapeLarge,
+        icon = {
+            Icon(Icons.Default.Warning, null, Modifier.size(40.dp), tint = PhoenixFlame)
+        },
+        title = {
+            Text("Unsaved Changes", fontWeight = FontWeight.Bold, color = PhoenixFlame)
+        },
+        text = {
+            Text(
+                "You have pending changes that haven't been applied to the firewall. Do you want to save and apply them before leaving?",
+                fontSize = 13.sp, color = c.textSecondary
+            )
+        },
+        confirmButton = {
+            PhoenixButton("Save & Apply", c.green, onClick = {
+                onSave()
+                onDismiss()
+            })
+        },
+        dismissButton = {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                PhoenixButton("Discard", c.red, onClick = {
+                    onDiscard()
+                    onDismiss()
+                })
+                PhoenixButton("Cancel", c.textSecondary, onClick = onDismiss)
+            }
+        }
+    )
+}
+
+// ── Save & Apply bar ────────────────────────────────────────────────────────
+
+@Composable
+fun SaveApplyBar(
+    onChangeCount: Int,
+    onSaveApply: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val c = LocalAppColors.current
+
+    AnimatedVisibility(
+        visible = onChangeCount > 0,
+        enter = slideInVertically(tween(300, easing = FastOutSlowInEasing)) { it } + fadeIn(tween(300)),
+        exit  = slideOutVertically(tween(250, easing = FastOutSlowInEasing)) { it } + fadeOut(tween(200)),
+        modifier = modifier
+    ) {
+        Box(
+            Modifier.fillMaxWidth()
+                .background(c.surface, PhoenixShapeLarge)
+                .border(1.dp, PhoenixFlame.copy(0.45f), PhoenixShapeLarge)
+                .padding(horizontal = 16.dp, vertical = 12.dp)
+        ) {
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    Icons.Default.Warning, null,
+                    tint = PhoenixFlame, modifier = Modifier.size(20.dp)
+                )
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        "$onChangeCount pending change${if (onChangeCount != 1) "s" else ""}",
+                        fontWeight = FontWeight.Bold, fontSize = 12.sp, color = PhoenixFlame
+                    )
+                    Text(
+                        "VPN restart required to apply",
+                        fontSize = 10.sp, color = c.textSecondary
+                    )
+                }
+                Spacer(Modifier.width(12.dp))
+                PhoenixButton("Save & Apply", c.green, onClick = onSaveApply)
+            }
+        }
     }
 }

@@ -38,7 +38,7 @@ class VpnTrackerService : VpnService() {
     @Volatile private var cachedRules: List<FilterRule> = emptyList()
 
     companion object {
-        private const val TAG        = "AndroWall"
+        private const val TAG        = "Androwall"
         private const val CHANNEL_ID = "vpn_channel"
         private const val NOTIF_ID   = 1
         private const val DNS_SERVER = "8.8.8.8"
@@ -48,6 +48,7 @@ class VpnTrackerService : VpnService() {
 
         const val ACTION_START_VPN    = "com.androwall.ACTION_START_VPN"
         const val ACTION_STOP_VPN     = "com.androwall.ACTION_STOP_VPN"
+        const val ACTION_RESTART_VPN  = "com.androwall.ACTION_RESTART_VPN"
         const val ACTION_CLOSE        = "com.androwall.ACTION_CLOSE"
         // Fired by deleteIntent when OS removes the notification (API 34+ clear-all).
         // Re-posts immediately so the persistent notification is never truly gone.
@@ -90,6 +91,12 @@ class VpnTrackerService : VpnService() {
             }
 
             ACTION_START_VPN -> {
+                startVpn()
+                return START_STICKY
+            }
+
+            ACTION_RESTART_VPN -> {
+                stopVpn()
                 startVpn()
                 return START_STICKY
             }
@@ -192,7 +199,7 @@ class VpnTrackerService : VpnService() {
         if (enabled.isEmpty()) return false
 
         val builder = Builder()
-            .setSession("AndroWall")
+            .setSession("Androwall")
             .addAddress("10.0.0.2", 32)
             .addDnsServer(DNS_SERVER)
             .addRoute(DNS_SERVER, 32)   // only tunnel DNS-server traffic
