@@ -33,6 +33,7 @@ class VpnTrackerService : VpnService() {
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val writeMutex = Mutex()
     private var initialized = false
+    @Volatile private var vpnGeneration = 0L
 
     // Pre-filtered to isEnabled — updated reactively from DB
     @Volatile private var cachedRules: List<FilterRule> = emptyList()
@@ -152,25 +153,29 @@ class VpnTrackerService : VpnService() {
     private fun startVpn() {
         if (vpnThread?.isAlive == true) return
 
+        val myGen = ++vpnGeneration
+
         Thread({
             try {
                 if (setupVpn()) {
+                    if (myGen != vpnGeneration) return@Thread
                     _isRunning.value = true
                     updateNotification(running = true)
                     processPackets()          // blocks until interrupted
                 } else {
+                    if (myGen != vpnGeneration) return@Thread
                     Log.w(TAG, "startVpn: no enabled apps or establish() returned null")
-                    _isRunning.value = false
-                    updateNotification(running = false)
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "VPN thread error", e)
             } finally {
-                _isRunning.value = false
-                runCatching { vpnInterface?.close() }
-                vpnInterface = null
-                vpnThread    = null
-                updateNotification(running = false)
+                if (myGen == vpnGeneration) {
+                    _isRunning.value = false
+                    vpnThread    = null
+                    runCatching { vpnInterface?.close() }
+                    vpnInterface = null
+                    updateNotification(running = false)
+                }
             }
         }, "VpnTrackerThread").also { vpnThread = it }.start()
     }
@@ -183,6 +188,7 @@ class VpnTrackerService : VpnService() {
     private fun stopVpn() {
         vpnThread?.interrupt()
         vpnThread = null
+        vpnGeneration++   // invalidate any stale thread's finally block
         runCatching { vpnInterface?.close() }
         vpnInterface     = null
         _isRunning.value = false
