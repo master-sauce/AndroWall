@@ -211,16 +211,43 @@ fun MainScreen(navController: NavController, dao: AppDao) {
     var toastMessage            by remember { mutableStateOf("") }
     var showClearLogsDialog     by remember { mutableStateOf(false) }
     var showAddGlobalRuleDialog by remember { mutableStateOf(false) }
+    var showUnsavedDialog      by remember { mutableStateOf(false) }
 
     // ── Pending changes tracking (for Rules tab) ────────────────────────────
     var pendingChangesCount by remember { mutableIntStateOf(0) }
     val incrementChanges: () -> Unit = { pendingChangesCount++ }
     val clearChanges:     () -> Unit = { pendingChangesCount = 0 }
 
+    // ── Snapshot for discard ────────────────────────────────────────────────
+    var snapshotGlobalRules  by remember { mutableStateOf<List<FilterRule>>(emptyList()) }
+    var snapshotFilterMode   by remember { mutableStateOf<FilterMode?>(null) }
+
+    LaunchedEffect(Unit) {
+        kotlinx.coroutines.delay(150)
+        snapshotGlobalRules = globalRules
+        snapshotFilterMode  = filterMode
+    }
+
+    val discardChanges: () -> Unit = {
+        scope.launch {
+            // Restore global rules: re-insert all originals, delete any added since snapshot
+            val origIds = snapshotGlobalRules.map { it.id }.toSet()
+            snapshotGlobalRules.forEach { dao.insertRule(it) }
+            globalRules.filter { it.id !in origIds }.forEach { dao.deleteRule(it) }
+            // Restore filter mode
+            snapshotFilterMode?.let { VpnTrackerService.setFilterMode(context, it) }
+            clearChanges()
+        }
+    }
+
+    val enabledPackages = remember(appConfigs) {
+        appConfigs.filter { it.isFilteringEnabled }.map { it.packageName }.toSet()
+    }
+
     val performApply: () -> Unit = {
         clearChanges()
-        // Only restart if the service is currently active; don't start a stopped service
-        if (isRunning) {
+        // Only restart if the service is active AND at least one app has filtering enabled
+        if (isRunning && enabledPackages.isNotEmpty()) {
             context.startService(
                 Intent(context, VpnTrackerService::class.java)
                     .apply { action = VpnTrackerService.ACTION_STOP_VPN }
@@ -245,10 +272,6 @@ fun MainScreen(navController: NavController, dao: AppDao) {
             .filter { (it.flags and ApplicationInfo.FLAG_SYSTEM) == 0 }
             .filter { it.packageName != context.packageName }
             .sortedBy { pm.getApplicationLabel(it).toString() }
-    }
-
-    val enabledPackages = remember(appConfigs) {
-        appConfigs.filter { it.isFilteringEnabled }.map { it.packageName }.toSet()
     }
 
     val filteredApps = remember(installedApps, searchQuery, enabledPackages) {
@@ -288,6 +311,25 @@ fun MainScreen(navController: NavController, dao: AppDao) {
                 incrementChanges()
             }
         )
+    }
+
+    // ── Unsaved changes dialog ──────────────────────────────────────────────
+    if (showUnsavedDialog) {
+        UnsavedChangesDialog(
+            onDiscard = {
+                showUnsavedDialog = false
+                discardChanges()
+            },
+            onSave = {
+                showUnsavedDialog = false
+                performApply()
+            },
+            onDismiss = { showUnsavedDialog = false }
+        )
+    }
+
+    BackHandler(enabled = pendingChangesCount > 0) {
+        showUnsavedDialog = true
     }
 
     Scaffold(
@@ -836,7 +878,7 @@ fun AppDetailScreen(navController: NavController, dao: AppDao, packageName: Stri
     val scope   = rememberCoroutineScope()
     val c       = LocalAppColors.current
 
-    // ── Pending changes tracking ─────────────────────────────────────────────
+    // ── Pending changes & snapshot tracking ──────────────────────────────────
     var pendingChangesCount by remember { mutableIntStateOf(0) }
     var showUnsavedDialog   by remember { mutableStateOf(false) }
     val isRunning           by VpnTrackerService.isRunning.collectAsState()
@@ -844,23 +886,9 @@ fun AppDetailScreen(navController: NavController, dao: AppDao, packageName: Stri
     val incrementChanges: () -> Unit = { pendingChangesCount++ }
     val clearChanges:     () -> Unit = { pendingChangesCount = 0 }
 
-    val performApply: () -> Unit = {
-        clearChanges()
-        if (isRunning) {
-            context.startService(
-                Intent(context, VpnTrackerService::class.java)
-                    .apply { action = VpnTrackerService.ACTION_STOP_VPN }
-            )
-            context.startService(Intent(context, VpnTrackerService::class.java))
-        }
-    }
-
-    val handleBackRequest: () -> Unit = {
-        if (pendingChangesCount > 0) showUnsavedDialog = true
-        else navController.popBackStack()
-    }
-
-    BackHandler(onBack = handleBackRequest)
+    // ── Snapshot for discard ────────────────────────────────────────────────
+    var snapshotAppConfig by remember { mutableStateOf<AppConfig?>(null) }
+    var snapshotAppRules  by remember { mutableStateOf<List<FilterRule>>(emptyList()) }
 
     val label = remember(packageName) {
         try {
@@ -877,6 +905,51 @@ fun AppDetailScreen(navController: NavController, dao: AppDao, packageName: Stri
     val allLogs       by dao.getRecentLogs().collectAsState(initial = emptyList())
     val filterMode    by VpnTrackerService.filterMode.collectAsState()
     val combinedRules = remember(appRules, globalRules) { appRules + globalRules }
+    val anyEnabledApps = remember(configs) { configs.any { it.isFilteringEnabled } }
+
+    // Take snapshot after Room delivers initial data (brief delay avoids capturing user's first change)
+    LaunchedEffect(Unit) {
+        kotlinx.coroutines.delay(150)
+        snapshotAppConfig = appConfig
+        snapshotAppRules  = appRules
+    }
+
+    val performApply: () -> Unit = {
+        clearChanges()
+        // Only restart if the service is active AND at least one app has filtering enabled
+        if (isRunning && anyEnabledApps) {
+            context.startService(
+                Intent(context, VpnTrackerService::class.java)
+                    .apply { action = VpnTrackerService.ACTION_STOP_VPN }
+            )
+            context.startService(Intent(context, VpnTrackerService::class.java))
+        }
+    }
+
+    val discardChanges: () -> Unit = {
+        scope.launch {
+            // Restore app config to original state
+            if (snapshotAppConfig != null) {
+                dao.insertAppConfig(snapshotAppConfig!!)
+            } else {
+                // App had no config originally — if user created one, delete it
+                appConfig?.let { dao.insertAppConfig(it.copy(isFilteringEnabled = false)) }
+            }
+            // Restore app rules: re-insert all originals, delete any added since snapshot
+            val origIds = snapshotAppRules.map { it.id }.toSet()
+            snapshotAppRules.forEach { dao.insertRule(it) }
+            appRules.filter { it.id !in origIds }.forEach { dao.deleteRule(it) }
+            clearChanges()
+            navController.popBackStack()
+        }
+    }
+
+    val handleBackRequest: () -> Unit = {
+        if (pendingChangesCount > 0) showUnsavedDialog = true
+        else navController.popBackStack()
+    }
+
+    BackHandler(onBack = handleBackRequest)
 
     var selectedSection     by remember { mutableIntStateOf(0) }
     var showAddRuleDialog   by remember { mutableStateOf(false) }
@@ -892,8 +965,7 @@ fun AppDetailScreen(navController: NavController, dao: AppDao, packageName: Stri
     if (showUnsavedDialog) {
         UnsavedChangesDialog(
             onDiscard = {
-                clearChanges()
-                navController.popBackStack()
+                discardChanges()
             },
             onSave = {
                 performApply()
