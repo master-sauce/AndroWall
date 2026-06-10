@@ -1461,6 +1461,7 @@ fun SaveApplyBar(
     ) {
         Box(
             Modifier.fillMaxWidth()
+                .padding(end = 64.dp)   // avoid collision with FAB
                 .background(c.surface, PhoenixShapeLarge)
                 .border(1.dp, PhoenixFlame.copy(0.45f), PhoenixShapeLarge)
                 .padding(horizontal = 16.dp, vertical = 12.dp)
@@ -1476,7 +1477,7 @@ fun SaveApplyBar(
                 Spacer(Modifier.width(10.dp))
                 Column(Modifier.weight(1f)) {
                     Text(
-                        "$onChangeCount pending change${if (onChangeCount != 1) "s" else ""}",
+                        "Pending changes",
                         fontWeight = FontWeight.Bold, fontSize = 12.sp, color = PhoenixFlame
                     )
                     Text(
