@@ -62,6 +62,12 @@ interface AppDao {
     @Query("UPDATE filter_rules SET isEnabled = :enabled WHERE id = :id")
     suspend fun setRuleEnabled(id: Int, enabled: Boolean)
 
+    @Query("DELETE FROM filter_rules WHERE packageName IS NULL")
+    suspend fun deleteAllGlobalRules()
+
+    @Query("DELETE FROM filter_rules WHERE packageName = :packageName")
+    suspend fun deleteAllRulesForApp(packageName: String)
+
     // ── Connection logs ───────────────────────────────────────────────────────
     @Query("SELECT * FROM connection_logs ORDER BY timestamp DESC LIMIT 200")
     fun getRecentLogs(): Flow<List<ConnectionLog>>

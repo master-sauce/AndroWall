@@ -47,6 +47,7 @@ import androidx.navigation.NavType
 import androidx.navigation.compose.*
 import androidx.navigation.navArgument
 import com.androwall.data.*
+import com.androwall.ui.ImportExportBar
 import com.androwall.ui.theme.*
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
@@ -651,6 +652,13 @@ fun GlobalRulesTab(
 ) {
     Column(Modifier.fillMaxSize()) {
         FilterModeCard(filterMode) { VpnTrackerService.setFilterMode(context, it); onChanged() }
+        ImportExportBar(
+            scope         = "global",
+            rulesProvider = { rules },
+            filterMode    = filterMode,
+            dao           = dao,
+            onChanged     = onChanged
+        )
         if (rules.isEmpty()) {
             PhoenixEmptyState(Icons.Default.Lock,
                 if (filterMode == FilterMode.BLACKLIST)
@@ -814,7 +822,8 @@ fun RuleItem(
     val c     = LocalAppColors.current
     val color = if (rule.action == RuleAction.BLOCK) c.red else c.green
 
-    var showEditDialog by remember { mutableStateOf(false) }
+    var showEditDialog   by remember { mutableStateOf(false) }
+    var showDeleteDialog by remember { mutableStateOf(false) }
 
     if (showEditDialog) {
         AddRuleDialog(
@@ -828,6 +837,17 @@ fun RuleItem(
                 onEdit(updated.copy(id = rule.id, packageName = rule.packageName, isEnabled = rule.isEnabled))
                 onChanged()
             }
+        )
+    }
+
+    if (showDeleteDialog) {
+        PhoenixAlertDialog(
+            title = "Delete Rule",
+            text  = "Delete the ${rule.action.name.lowercase()} rule for \"${rule.pattern}\"? This cannot be undone.",
+            confirmText = "Delete",
+            confirmColor = c.red,
+            onConfirm = { onDelete(); onChanged(); showDeleteDialog = false },
+            onDismiss = { showDeleteDialog = false }
         )
     }
 
@@ -861,8 +881,8 @@ fun RuleItem(
         IconButton(onClick = { showEditDialog = true }, modifier = Modifier.size(36.dp)) {
             Icon(Icons.Default.Edit, "Edit", tint = PhoenixFlame.copy(0.6f), modifier = Modifier.size(16.dp))
         }
-        // Delete
-        IconButton(onClick = { onDelete(); onChanged() }, modifier = Modifier.size(36.dp)) {
+        // Delete (opens confirmation dialog)
+        IconButton(onClick = { showDeleteDialog = true }, modifier = Modifier.size(36.dp)) {
             Icon(Icons.Default.Delete, "Delete", tint = c.red.copy(0.6f), modifier = Modifier.size(16.dp))
         }
     }
@@ -1103,7 +1123,16 @@ fun AppDetailScreen(navController: NavController, dao: AppDao, packageName: Stri
                         AppTrafficList(filteredLogs, combinedRules, filterMode, packageName, dao, scope, incrementChanges)
                     }
                 } else {
-                    AppRulesList(appRules, label, globalRules.size, dao, scope, incrementChanges)
+                    Column(Modifier.fillMaxSize()) {
+                        ImportExportBar(
+                            scope         = "app:$packageName",
+                            rulesProvider = { appRules },
+                            filterMode    = null,
+                            dao           = dao,
+                            onChanged     = incrementChanges
+                        )
+                        AppRulesList(appRules, label, globalRules.size, dao, scope, incrementChanges)
+                    }
                 }
             }
 
