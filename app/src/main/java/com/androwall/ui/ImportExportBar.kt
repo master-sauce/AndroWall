@@ -2,7 +2,7 @@ package com.androwall.ui
 
 import android.content.Context
 import android.net.Uri
-import android.util.Log
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -35,8 +35,6 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-private const val TAG = "AndroWall/IO"
-
 /**
  * A compact row that offers Import / Export buttons for a rule scope.
  *
@@ -52,8 +50,7 @@ private const val TAG = "AndroWall/IO"
  *   - **Replace**: deletes every existing rule in this scope, then inserts the
  *     imported ones.
  *
- * Success/error feedback is written to logcat (TAG = `AndroWall/IO`) instead of
- * an on-screen toast, per the app's UI direction.
+ * Success/error feedback is shown via a native Android [Toast].
  */
 @Composable
 fun ImportExportBar(
@@ -79,8 +76,8 @@ fun ImportExportBar(
         if (uri == null) return@rememberLauncherForActivityResult
         val rules = rulesProvider()
         if (rules.isEmpty()) {
-            Log.i(TAG, "Export skipped: no rules in scope ${currentScope.value}")
             infoMessage = "No rules to export"
+            showToast(context, "No rules to export")
             return@rememberLauncherForActivityResult
         }
         val scopeValue = currentScope.value
@@ -88,10 +85,10 @@ fun ImportExportBar(
         coroutineScope.launch {
             val ok = writeUri(context, uri, json)
             if (ok) {
-                Log.i(TAG, "Exported ${rules.size} rule(s) from $scopeValue -> $uri")
+                showToast(context, "Exported ${rules.size} rule${plural(rules.size)}")
             } else {
-                Log.e(TAG, "Export failed: could not write to $uri")
                 infoMessage = "Failed to write file"
+                showToast(context, "Failed to write file")
             }
         }
     }
@@ -105,17 +102,17 @@ fun ImportExportBar(
                 val json = withContext(Dispatchers.IO) { readUri(context, uri) }
                 val parsed = RulesIO.parse(json)
                 if (parsed.rules.isEmpty()) {
-                    Log.w(TAG, "Import: file $uri contained no rules")
                     infoMessage = "File contains no rules"
+                    showToast(context, "File contains no rules")
                 } else {
                     pendingImport = parsed
                 }
             } catch (e: IllegalArgumentException) {
-                Log.w(TAG, "Import rejected: ${e.message}")
                 infoMessage = e.message ?: "Invalid file"
+                showToast(context, infoMessage ?: "Invalid file")
             } catch (e: Exception) {
-                Log.e(TAG, "Import read failed: ${e.message}", e)
                 infoMessage = "Read failed: ${e.message ?: "unknown error"}"
+                showToast(context, infoMessage ?: "Read failed")
             }
         }
     }
@@ -157,7 +154,7 @@ fun ImportExportBar(
                     pendingImport = null
                     coroutineScope.launch {
                         val n = applyImport(dao, currentScope.value, imp, replace = false)
-                        Log.i(TAG, "Imported (merge) $n rule(s) into ${currentScope.value}")
+                        showToast(context, "Imported $n rule${plural(n)} (merge)")
                         onChanged()
                     }
                 })
@@ -169,7 +166,7 @@ fun ImportExportBar(
                         pendingImport = null
                         coroutineScope.launch {
                             val n = applyImport(dao, currentScope.value, imp, replace = true)
-                            Log.i(TAG, "Imported (replace) $n rule(s) into ${currentScope.value}")
+                            showToast(context, "Imported $n rule${plural(n)} (replaced)")
                             onChanged()
                         }
                     })
@@ -260,6 +257,23 @@ private fun ImportExportButton(
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 private fun plural(n: Int): String = if (n != 1) "s" else ""
+
+/**
+ * Shows a native Android [Toast] (the small black popup at the bottom of the
+ * screen). Safe to call from any thread — hops to the main dispatcher before
+ * calling [Toast.show] since Android requires the main thread for UI ops.
+ */
+private fun showToast(context: Context, message: String) {
+    // If we're already on the main thread (e.g. inside an Activity Result
+    // callback), show immediately; otherwise post to the main looper.
+    if (android.os.Looper.myLooper() === android.os.Looper.getMainLooper()) {
+        Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+    } else {
+        android.os.Handler(android.os.Looper.getMainLooper()).post {
+            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+        }
+    }
+}
 
 private fun suggestedFileName(scope: String): String {
     val safe = if (scope == "global") "global" else scope.removePrefix("app:").replace(Regex("[^A-Za-z0-9._-]"), "_")
