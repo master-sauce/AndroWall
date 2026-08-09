@@ -188,6 +188,77 @@ fun generateWildcardExamples(pattern: String): List<String> {
     }.distinct()
 }
 
+/**
+ * Generates example *full domain strings* a rule would match for any [MatchType],
+ * so the user can see dynamically what their rule will Block or Allow.
+ *
+ * - EXACT     → the pattern itself
+ * - SUBDOMAIN → pattern + a couple of realistic subdomains
+ * - PREFIX    → domains that start with the pattern
+ * - SUFFIX    → domains that end with the pattern
+ * - CONTAINS  → domains that contain the pattern
+ * - WILDCARD  → delegates to [generateWildcardExamples]
+ *
+ * Returns an empty list when the pattern is blank or (for SUBDOMAIN/PREFIX/SUFFIX)
+ * the pattern doesn't yet form a sensible domain.
+ */
+fun generateMatchExamples(pattern: String, matchType: MatchType): List<String> {
+    val p = pattern.trim().lowercase()
+    if (p.isBlank()) return emptyList()
+
+    val sampleHosts = listOf("www", "api", "cdn", "ads", "stats", "media")
+    val sampleTlds  = listOf("com", "net", "io", "org", "co")
+
+    return when (matchType) {
+        MatchType.EXACT -> listOf(p)
+
+        MatchType.SUBDOMAIN -> {
+            // Build a sensible base domain. If the user hasn't typed a dot yet,
+            // append a sample TLD so examples appear immediately as they type.
+            val base = if (p.contains('.')) p.removePrefix(".") else "$p.${sampleTlds.first()}"
+            if (base.isBlank()) return emptyList()
+            val subs = sampleHosts.take(2).map { "$it.$base" }
+            (listOf(base) + subs).distinct()
+        }
+
+        MatchType.PREFIX -> {
+            // If the prefix doesn't look like a domain segment, fabricate hostnames
+            val clean = p.removeSuffix(".")
+            if (clean.isBlank()) return emptyList()
+            sampleHosts.take(3).mapIndexed { i, host ->
+                if (p.endsWith('.')) "$p$host.${sampleTlds[i % sampleTlds.size]}"
+                else "$p.${sampleTlds[i % sampleTlds.size]}"
+            }.distinct()
+        }
+
+        MatchType.SUFFIX -> {
+            val clean = p.removePrefix(".")
+            if (clean.isBlank()) return emptyList()
+            // Build domains that end with the suffix
+            sampleHosts.take(3).mapIndexed { i, host ->
+                if (p.startsWith('.')) "$host$p"
+                else "$host.$p"
+            }.distinct()
+        }
+
+        MatchType.CONTAINS -> {
+            if (!p.contains('.')) {
+                // Bare keyword — embed it inside plausible domains
+                sampleHosts.take(3).mapIndexed { i, host ->
+                    "$host.$p.${sampleTlds[i % sampleTlds.size]}"
+                }.distinct()
+            } else {
+                // Already a fragment of a domain — wrap it
+                sampleHosts.take(3).mapIndexed { i, host ->
+                    "$host.$p"
+                }.distinct()
+            }
+        }
+
+        MatchType.WILDCARD -> generateWildcardExamples(p)
+    }
+}
+
 // ── Main screen ───────────────────────────────────────────────────────────────
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -673,7 +744,9 @@ fun GlobalRulesTab(
 @Composable
 fun RulesListContent(rules: List<FilterRule>, dao: AppDao, scope: CoroutineScope, onChanged: () -> Unit = {}) {
     val c = LocalAppColors.current
-    LazyColumn {
+    // Bottom padding clears the floating "+" button so the last rule's
+    // edit/delete actions are never hidden behind the FAB.
+    LazyColumn(contentPadding = PaddingValues(bottom = 96.dp)) {
         val allow = rules.filter { it.action == RuleAction.ALLOW }
         val block  = rules.filter { it.action == RuleAction.BLOCK }
         if (allow.isNotEmpty()) {
@@ -711,7 +784,9 @@ fun GlobalLogList(
         PhoenixEmptyState(Icons.Default.List, "No DNS history yet\nStart the firewall to begin monitoring")
         return
     }
-    LazyColumn {
+    // Bottom padding clears the floating trash button so the last log row
+    // is never hidden behind the FAB.
+    LazyColumn(contentPadding = PaddingValues(bottom = 96.dp)) {
         items(logs, key = { it.id }) { log ->
             LogItemExtended(
                 log        = log,
@@ -735,7 +810,9 @@ fun AppTrafficList(
             "No DNS activity yet\nEnable firewall for this app\nthen start the engine")
         return
     }
-    LazyColumn {
+    // Bottom padding clears the floating trash button so the last log row
+    // is never hidden behind the FAB.
+    LazyColumn(contentPadding = PaddingValues(bottom = 96.dp)) {
         items(logs, key = { it.id }) { log ->
             LogItemExtended(
                 log        = log,
@@ -1169,7 +1246,12 @@ fun AppRulesList(rules: List<FilterRule>, appLabel: String, globalCount: Int, da
             PhoenixEmptyState(Icons.Default.Lock,
                 "No app-specific rules\nTap + to add one\nor tap Add Rule in DNS Activity")
         } else {
-            LazyColumn(Modifier.weight(1f)) {
+            // Bottom padding clears the floating "+" button so the last rule's
+            // edit/delete actions are never hidden behind the FAB.
+            LazyColumn(
+                modifier = Modifier.weight(1f),
+                contentPadding = PaddingValues(bottom = 96.dp)
+            ) {
                 val allow = rules.filter { it.action == RuleAction.ALLOW }
                 val block  = rules.filter { it.action == RuleAction.BLOCK }
                 if (allow.isNotEmpty()) {
@@ -1219,10 +1301,14 @@ fun AddRuleDialog(
     var menuExpanded by remember { mutableStateOf(false) }
     val trimmed = pattern.trim().lowercase()
 
-    // Live wildcard preview — recomputes on every keystroke
-    val wildcardExamples = remember(matchType, trimmed) {
-        if (matchType == MatchType.WILDCARD) generateWildcardExamples(trimmed) else emptyList()
+    // Live preview — recomputes on every keystroke for ANY match type.
+    // Shows the full domain strings this rule will Block or Allow.
+    val matchExamples = remember(matchType, trimmed, action) {
+        generateMatchExamples(trimmed, matchType)
     }
+    val previewLabel     = if (action == RuleAction.BLOCK) "This rule will BLOCK:" else "This rule will ALLOW:"
+    val previewColor     = if (action == RuleAction.BLOCK) c.red else c.green
+    val previewGhost     = if (action == RuleAction.BLOCK) c.red.copy(0.08f) else c.green.copy(0.08f)
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -1277,19 +1363,31 @@ fun AddRuleDialog(
                     textStyle = LocalTextStyle.current.copy(fontFamily = FontFamily.Monospace, fontSize = 13.sp)
                 )
 
-                // Wildcard live preview — appears only when type=WILDCARD and * is present
-                AnimatedVisibility(visible = wildcardExamples.isNotEmpty()) {
+                // Live Block/Allow preview — appears for any match type whenever
+                // the pattern yields at least one example domain. Recomputes on
+                // every keystroke and reflects the currently selected action.
+                AnimatedVisibility(visible = matchExamples.isNotEmpty()) {
                     Column(
                         Modifier.fillMaxWidth()
-                            .background(PhoenixFlameGhost, PhoenixShapeSmall)
-                            .border(0.5.dp, PhoenixFlame.copy(0.35f), PhoenixShapeSmall)
+                            .background(previewGhost, PhoenixShapeSmall)
+                            .border(0.5.dp, previewColor.copy(0.4f), PhoenixShapeSmall)
                             .padding(10.dp)
                     ) {
-                        Text("Pattern matches e.g:", fontSize = 10.sp, color = PhoenixFlameDim)
+                        Text(previewLabel, fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = previewColor)
                         Spacer(Modifier.height(4.dp))
-                        wildcardExamples.forEach { ex ->
-                            Text("→ $ex", fontFamily = FontFamily.Monospace,
-                                fontWeight = FontWeight.Medium, fontSize = 11.sp, color = c.textPrimary)
+                        matchExamples.take(4).forEach { ex ->
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(
+                                    Modifier.size(6.dp).background(previewColor, androidx.compose.foundation.shape.CircleShape)
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                Text(ex, fontFamily = FontFamily.Monospace,
+                                    fontWeight = FontWeight.Medium, fontSize = 11.sp, color = c.textPrimary)
+                            }
+                        }
+                        if (matchExamples.size > 4) {
+                            Spacer(Modifier.height(2.dp))
+                            Text("+${matchExamples.size - 4} more", fontSize = 9.sp, color = c.textSecondary)
                         }
                     }
                 }
