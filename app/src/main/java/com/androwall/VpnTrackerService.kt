@@ -49,6 +49,7 @@ class VpnTrackerService : VpnService() {
         private const val DNS_PORT = 53
         private const val PREFS_NAME = "androwall_prefs"
         private const val KEY_MODE = "filter_mode"
+        private const val KEY_SYSTEM_WIDE = "system_wide"
 
         const val ACTION_START_VPN = "com.androwall.ACTION_START_VPN"
         const val ACTION_STOP_VPN = "com.androwall.ACTION_STOP_VPN"
@@ -66,6 +67,11 @@ class VpnTrackerService : VpnService() {
         private val _filterMode = MutableStateFlow(FilterMode.BLACKLIST)
         val filterMode: StateFlow<FilterMode> = _filterMode
 
+        private val _systemWide = MutableStateFlow(false)
+
+        /** When true, VPN tunnels ALL apps for DNS — no per-app selection needed. */
+        val systemWide: StateFlow<Boolean> = _systemWide
+
         fun loadPersistedMode(context: Context) {
             val raw = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 .getString(KEY_MODE, FilterMode.BLACKLIST.name) ?: FilterMode.BLACKLIST.name
@@ -77,6 +83,17 @@ class VpnTrackerService : VpnService() {
             _filterMode.value = mode
             context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 .edit().putString(KEY_MODE, mode.name).apply()
+        }
+
+        fun loadPersistedSystemWide(context: Context) {
+            _systemWide.value = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .getBoolean(KEY_SYSTEM_WIDE, false)
+        }
+
+        fun setSystemWide(context: Context, enabled: Boolean) {
+            _systemWide.value = enabled
+            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit().putBoolean(KEY_SYSTEM_WIDE, enabled).apply()
         }
     }
 
@@ -209,7 +226,9 @@ class VpnTrackerService : VpnService() {
         val db = AppDatabase.getDatabase(this)
         val configs = runBlocking { db.appDao().getAllAppConfigs().first() }
         val enabled = configs.filter { it.isFilteringEnabled }
-        if (enabled.isEmpty()) return false
+
+        // System-wide mode: tunnel all apps. Per-app mode: require at least one enabled.
+        if (!_systemWide.value && enabled.isEmpty()) return false
 
         val builder = Builder()
             .setSession("Androwall")
@@ -218,16 +237,22 @@ class VpnTrackerService : VpnService() {
             .addRoute(DNS_SERVER, 32)   // only tunnel DNS-server traffic
             .setBlocking(true)           // blocking read avoids busy-loop
 
-        enabled.forEach { cfg ->
-            try {
-                builder.addAllowedApplication(cfg.packageName)
-            } catch (e: Exception) {
-                Log.w(TAG, "Skipped unknown package: ${cfg.packageName}")
+        if (_systemWide.value) {
+            // No addAllowedApplication → VPN tunnels ALL apps' DNS
+            Log.d(TAG, "VPN setup: system-wide mode (all apps)")
+        } else {
+            enabled.forEach { cfg ->
+                try {
+                    builder.addAllowedApplication(cfg.packageName)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Skipped unknown package: ${cfg.packageName}")
+                }
             }
+            Log.d(TAG, "VPN setup: per-app mode, apps=${enabled.size}")
         }
 
         vpnInterface = builder.establish()
-        Log.d(TAG, "VPN established=${vpnInterface != null}, apps=${enabled.size}")
+        Log.d(TAG, "VPN established=${vpnInterface != null}")
         return vpnInterface != null
     }
 

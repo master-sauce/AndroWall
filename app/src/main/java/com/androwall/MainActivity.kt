@@ -92,6 +92,7 @@ fun AndroWallApp() {
     // Initialize filter mode + EasyList engine before VPN starts
     LaunchedEffect(Unit) {
         VpnTrackerService.loadPersistedMode(context)
+        VpnTrackerService.loadPersistedSystemWide(context)
         FilterListRepo.init(context)
     }
 
@@ -279,6 +280,7 @@ fun MainScreen(navController: NavController, dao: AppDao) {
     val globalRules by dao.getGlobalRules().collectAsState(initial = emptyList())
     val filterMode by VpnTrackerService.filterMode.collectAsState()
     val isRunning by VpnTrackerService.isRunning.collectAsState()
+    val systemWide by VpnTrackerService.systemWide.collectAsState()
 
     var installedApps by remember { mutableStateOf<List<ApplicationInfo>>(emptyList()) }
     var searchQuery by remember { mutableStateOf("") }
@@ -323,8 +325,8 @@ fun MainScreen(navController: NavController, dao: AppDao) {
 
     val performApply: () -> Unit = {
         clearChanges()
-        // Only restart if the service is active AND at least one app has filtering enabled
-        if (isRunning && enabledPackages.isNotEmpty()) {
+        // Restart if running — system-wide mode or per-app with enabled apps
+        if (isRunning && (systemWide || enabledPackages.isNotEmpty())) {
             context.startService(
                 Intent(context, VpnTrackerService::class.java)
                     .apply { action = VpnTrackerService.ACTION_STOP_VPN }
@@ -499,16 +501,28 @@ fun MainScreen(navController: NavController, dao: AppDao) {
             Column(Modifier.fillMaxSize()) {
                 FirewallStatusCard(
                     hasEnabledApps = enabledPackages.isNotEmpty(),
+                    systemWide = systemWide,
                     onStart = {
-                        if (enabledPackages.isEmpty()) {
+                        if (!systemWide && enabledPackages.isEmpty()) {
                             toastMessage =
-                                "No apps have filtering enabled.\nGo to the Apps tab and enable at least one."
+                                "No apps have filtering enabled.\nEnable System-wide mode or enable apps in the Apps tab."
                             showErrorToast = true
                             return@FirewallStatusCard
                         }
                         val intent = VpnService.prepare(context)
                         if (intent != null) vpnLauncher.launch(intent)
                         else context.startService(Intent(context, VpnTrackerService::class.java))
+                    },
+                    onToggleSystemWide = {
+                        VpnTrackerService.setSystemWide(context, !systemWide)
+                        // Restart VPN if running so tunnel scope changes immediately
+                        if (isRunning) {
+                            context.startService(
+                                Intent(context, VpnTrackerService::class.java)
+                                    .apply { action = VpnTrackerService.ACTION_STOP_VPN }
+                            )
+                            context.startService(Intent(context, VpnTrackerService::class.java))
+                        }
                     },
                     onStop = {
                         context.startService(
@@ -602,7 +616,13 @@ fun PhoenixSearchField(value: String, onValueChange: (String) -> Unit, placehold
 // ── Firewall status card ──────────────────────────────────────────────────────
 
 @Composable
-fun FirewallStatusCard(hasEnabledApps: Boolean, onStart: () -> Unit, onStop: () -> Unit) {
+fun FirewallStatusCard(
+    hasEnabledApps: Boolean,
+    systemWide: Boolean = false,
+    onStart: () -> Unit,
+    onStop: () -> Unit,
+    onToggleSystemWide: () -> Unit = {}
+) {
     val c = LocalAppColors.current
     val isRunning by VpnTrackerService.isRunning.collectAsState()
     val border = if (isRunning) PhoenixFlame else c.borderMid
@@ -613,39 +633,85 @@ fun FirewallStatusCard(hasEnabledApps: Boolean, onStart: () -> Unit, onStop: () 
             .border(1.dp, border.copy(0.4f), PhoenixShapeLarge)
             .clip(PhoenixShapeLarge)
     ) {
-        Row(Modifier.padding(horizontal = 20.dp, vertical = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                PulsingDot(if (isRunning) PhoenixFlame else c.textSecondary, 14.dp)
-                Spacer(Modifier.height(6.dp))
-                Icon(
-                    if (isRunning) Icons.Default.Lock else Icons.Default.LockOpen, null,
-                    tint = if (isRunning) PhoenixFlame else c.textSecondary, modifier = Modifier.size(22.dp)
-                )
-            }
-            Spacer(Modifier.width(18.dp))
-            Column(Modifier.weight(1f)) {
-                Text(
-                    if (isRunning) "Firewall Active" else "Firewall Offline",
-                    fontWeight = FontWeight.Bold, fontSize = 16.sp,
-                    color = if (isRunning) PhoenixFlame else c.textSecondary
-                )
-                Spacer(Modifier.height(2.dp))
-                Text(
-                    if (isRunning) "Monitoring DNS traffic" else "Engine is stopped",
-                    fontSize = 12.sp, color = if (isRunning) PhoenixFlame.copy(0.65f) else c.textTertiary
-                )
-                if (!isRunning) {
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        if (hasEnabledApps) "Ready to start" else "No apps enabled — go to Apps tab first",
-                        fontSize = 11.sp,
-                        color = if (hasEnabledApps) c.green.copy(0.8f) else c.red.copy(0.85f)
+        Column {
+            Row(
+                Modifier.padding(horizontal = 20.dp, vertical = 16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    PulsingDot(if (isRunning) PhoenixFlame else c.textSecondary, 14.dp)
+                    Spacer(Modifier.height(6.dp))
+                    Icon(
+                        if (isRunning) Icons.Default.Lock else Icons.Default.LockOpen, null,
+                        tint = if (isRunning) PhoenixFlame else c.textSecondary, modifier = Modifier.size(22.dp)
                     )
                 }
+                Spacer(Modifier.width(18.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        if (isRunning) "Firewall Active" else "Firewall Offline",
+                        fontWeight = FontWeight.Bold, fontSize = 16.sp,
+                        color = if (isRunning) PhoenixFlame else c.textSecondary
+                    )
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        if (isRunning)
+                            if (systemWide) "Monitoring all DNS traffic" else "Monitoring DNS traffic"
+                        else "Engine is stopped",
+                        fontSize = 12.sp, color = if (isRunning) PhoenixFlame.copy(0.65f) else c.textTertiary
+                    )
+                    if (!isRunning) {
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            if (systemWide || hasEnabledApps) "Ready to start" else "No apps enabled",
+                            fontSize = 11.sp,
+                            color = if (systemWide || hasEnabledApps) c.green.copy(0.8f) else c.red.copy(0.85f)
+                        )
+                    }
+                }
+                Spacer(Modifier.width(12.dp))
+                if (isRunning) PhoenixButton("Stop", c.red, onClick = onStop)
+                else PhoenixButton("Start", c.green, onClick = onStart)
             }
-            Spacer(Modifier.width(12.dp))
-            if (isRunning) PhoenixButton("Stop", c.red, onClick = onStop)
-            else PhoenixButton("Start", c.green, onClick = onStart)
+            // ── System-wide toggle row ──────────────────────────────────────────
+            Box(
+                Modifier.fillMaxWidth().height(0.5.dp)
+                    .padding(horizontal = 20.dp).background(c.borderFaint)
+            )
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    Icons.Default.Public,
+                    null,
+                    tint = if (systemWide) PhoenixFlame else c.textSecondary,
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        "System-wide mode",
+                        fontWeight = FontWeight.SemiBold, fontSize = 12.sp,
+                        color = if (systemWide) PhoenixFlame else c.textPrimary
+                    )
+                    Text(
+                        if (systemWide) "Blocks ads on ALL apps" else "Only blocks on enabled apps",
+                        fontSize = 10.sp, color = c.textSecondary.copy(0.7f)
+                    )
+                }
+                Switch(
+                    checked = systemWide,
+                    onCheckedChange = { onToggleSystemWide() },
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = PhoenixFlame,
+                        checkedTrackColor = PhoenixFlame.copy(0.25f),
+                        uncheckedThumbColor = c.textTertiary,
+                        uncheckedTrackColor = c.borderMid.copy(0.3f)
+                    ),
+                    modifier = Modifier.scale(0.8f)
+                )
+            }
         }
     }
 }
