@@ -32,6 +32,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -88,16 +89,20 @@ fun AndroWallApp() {
     val dao = AppDatabase.getDatabase(context).appDao()
     val c = LocalAppColors.current
 
-    LaunchedEffect(Unit) { VpnTrackerService.loadPersistedMode(context) }
+    // Initialize filter mode + EasyList engine before VPN starts
+    LaunchedEffect(Unit) {
+        VpnTrackerService.loadPersistedMode(context)
+        FilterListRepo.init(context)
+    }
 
     SideEffect {
         (context as? android.app.Activity)?.window?.setBackgroundDrawable(
             android.graphics.drawable.ColorDrawable(
                 android.graphics.Color.argb(
                     255,
-                    (c.background.red   * 255).toInt(),
+                    (c.background.red * 255).toInt(),
                     (c.background.green * 255).toInt(),
-                    (c.background.blue  * 255).toInt()
+                    (c.background.blue * 255).toInt()
                 )
             )
         )
@@ -106,10 +111,10 @@ fun AndroWallApp() {
     Box(Modifier.fillMaxSize().background(c.background)) {
         NavHost(
             navController, startDestination = "main",
-            enterTransition    = { EnterTransition.None },
-            exitTransition     = { ExitTransition.None },
+            enterTransition = { EnterTransition.None },
+            exitTransition = { ExitTransition.None },
             popEnterTransition = { EnterTransition.None },
-            popExitTransition  = { ExitTransition.None }
+            popExitTransition = { ExitTransition.None }
         ) {
             composable("main") { MainScreen(navController, dao) }
             composable(
@@ -131,14 +136,14 @@ fun wildcardMatch(pattern: String, input: String): Boolean {
 
 fun domainMatchesRule(domain: String, rule: FilterRule): Boolean {
     val lower = domain.lowercase()
-    val p     = rule.pattern.lowercase()
+    val p = rule.pattern.lowercase()
     return when (rule.matchType) {
-        MatchType.EXACT     -> lower == p
+        MatchType.EXACT -> lower == p
         MatchType.SUBDOMAIN -> lower == p || lower.endsWith(".$p")
-        MatchType.CONTAINS  -> lower.contains(p)
-        MatchType.PREFIX    -> lower.startsWith(p)
-        MatchType.SUFFIX    -> lower.endsWith(p)
-        MatchType.WILDCARD  -> wildcardMatch(p, lower)
+        MatchType.CONTAINS -> lower.contains(p)
+        MatchType.PREFIX -> lower.startsWith(p)
+        MatchType.SUFFIX -> lower.endsWith(p)
+        MatchType.WILDCARD -> wildcardMatch(p, lower)
     }
 }
 
@@ -148,9 +153,9 @@ fun findMatchingRule(domain: String, rules: List<FilterRule>): FilterRule? =
 fun isEffectivelyBlocked(domain: String, rules: List<FilterRule>, mode: FilterMode): Boolean {
     val match = findMatchingRule(domain, rules)
     return when {
-        match != null                -> match.action == RuleAction.BLOCK
+        match != null -> match.action == RuleAction.BLOCK
         mode == FilterMode.WHITELIST -> true
-        else                         -> false
+        else -> false
     }
 }
 
@@ -162,7 +167,7 @@ fun isEffectivelyBlocked(domain: String, rules: List<FilterRule>, mode: FilterMo
 fun generateWildcardExamples(pattern: String): List<String> {
     if (!pattern.contains('*')) return emptyList()
 
-    val parts    = pattern.split("*")           // segments between stars
+    val parts = pattern.split("*")           // segments between stars
     val starCount = parts.size - 1
 
     // Different filler words per example so output looks realistic
@@ -207,7 +212,7 @@ fun generateMatchExamples(pattern: String, matchType: MatchType): List<String> {
     if (p.isBlank()) return emptyList()
 
     val sampleHosts = listOf("www", "api", "cdn", "ads", "stats", "media")
-    val sampleTlds  = listOf("com", "net", "io", "org", "co")
+    val sampleTlds = listOf("com", "net", "io", "org", "co")
 
     return when (matchType) {
         MatchType.EXACT -> listOf(p)
@@ -265,39 +270,39 @@ fun generateMatchExamples(pattern: String, matchType: MatchType): List<String> {
 @Composable
 fun MainScreen(navController: NavController, dao: AppDao) {
     val context = LocalContext.current
-    val scope   = rememberCoroutineScope()
-    val c       = LocalAppColors.current
-    val isDark  by ThemePreference.isDark.collectAsState()
+    val scope = rememberCoroutineScope()
+    val c = LocalAppColors.current
+    val isDark by ThemePreference.isDark.collectAsState()
 
-    val appConfigs  by dao.getAllAppConfigs().collectAsState(initial = emptyList())
-    val recentLogs  by dao.getRecentLogs().collectAsState(initial = emptyList())
+    val appConfigs by dao.getAllAppConfigs().collectAsState(initial = emptyList())
+    val recentLogs by dao.getRecentLogs().collectAsState(initial = emptyList())
     val globalRules by dao.getGlobalRules().collectAsState(initial = emptyList())
-    val filterMode  by VpnTrackerService.filterMode.collectAsState()
-    val isRunning   by VpnTrackerService.isRunning.collectAsState()
+    val filterMode by VpnTrackerService.filterMode.collectAsState()
+    val isRunning by VpnTrackerService.isRunning.collectAsState()
 
-    var installedApps           by remember { mutableStateOf<List<ApplicationInfo>>(emptyList()) }
-    var searchQuery             by remember { mutableStateOf("") }
-    var logSearchQuery          by remember { mutableStateOf("") }
-    var selectedTab             by remember { mutableIntStateOf(0) }
-    var showErrorToast          by remember { mutableStateOf(false) }
-    var toastMessage            by remember { mutableStateOf("") }
-    var showClearLogsDialog     by remember { mutableStateOf(false) }
+    var installedApps by remember { mutableStateOf<List<ApplicationInfo>>(emptyList()) }
+    var searchQuery by remember { mutableStateOf("") }
+    var logSearchQuery by remember { mutableStateOf("") }
+    var selectedTab by remember { mutableIntStateOf(0) }
+    var showErrorToast by remember { mutableStateOf(false) }
+    var toastMessage by remember { mutableStateOf("") }
+    var showClearLogsDialog by remember { mutableStateOf(false) }
     var showAddGlobalRuleDialog by remember { mutableStateOf(false) }
-    var showUnsavedDialog      by remember { mutableStateOf(false) }
+    var showUnsavedDialog by remember { mutableStateOf(false) }
 
     // ── Pending changes tracking (for Rules tab) ────────────────────────────
     var pendingChangesCount by remember { mutableIntStateOf(0) }
     val incrementChanges: () -> Unit = { pendingChangesCount++ }
-    val clearChanges:     () -> Unit = { pendingChangesCount = 0 }
+    val clearChanges: () -> Unit = { pendingChangesCount = 0 }
 
     // ── Snapshot for discard ────────────────────────────────────────────────
-    var snapshotGlobalRules  by remember { mutableStateOf<List<FilterRule>>(emptyList()) }
-    var snapshotFilterMode   by remember { mutableStateOf<FilterMode?>(null) }
+    var snapshotGlobalRules by remember { mutableStateOf<List<FilterRule>>(emptyList()) }
+    var snapshotFilterMode by remember { mutableStateOf<FilterMode?>(null) }
 
     LaunchedEffect(Unit) {
         kotlinx.coroutines.delay(150)
         snapshotGlobalRules = globalRules
-        snapshotFilterMode  = filterMode
+        snapshotFilterMode = filterMode
     }
 
     val discardChanges: () -> Unit = {
@@ -329,7 +334,7 @@ fun MainScreen(navController: NavController, dao: AppDao) {
     }
 
     val notifLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
-    val vpnLauncher   = rememberLauncherForActivityResult(
+    val vpnLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
         if (result.resultCode == android.app.Activity.RESULT_OK)
@@ -426,32 +431,42 @@ fun MainScreen(navController: NavController, dao: AppDao) {
                 }
                 Box(
                     Modifier.fillMaxWidth().height(1.dp).align(Alignment.BottomStart)
-                        .background(Brush.horizontalGradient(
-                            listOf(PhoenixFlame.copy(0.7f), PhoenixFlame.copy(0.2f), Color.Transparent)))
+                        .background(
+                            Brush.horizontalGradient(
+                                listOf(PhoenixFlame.copy(0.7f), PhoenixFlame.copy(0.2f), Color.Transparent)
+                            )
+                        )
                 )
             }
         },
         bottomBar = {
             Box(Modifier.fillMaxWidth().background(c.surface).navigationBarsPadding()) {
-                Box(Modifier.fillMaxWidth().height(1.dp)
-                    .background(Brush.horizontalGradient(
-                        listOf(Color.Transparent, PhoenixFlame.copy(0.35f), Color.Transparent))))
+                Box(
+                    Modifier.fillMaxWidth().height(1.dp)
+                        .background(
+                            Brush.horizontalGradient(
+                                listOf(Color.Transparent, PhoenixFlame.copy(0.35f), Color.Transparent)
+                            )
+                        )
+                )
                 NavigationBar(containerColor = Color.Transparent, tonalElevation = 0.dp) {
-                    listOf(Triple(0, Icons.Default.Home, "Apps"),
+                    listOf(
+                        Triple(0, Icons.Default.Home, "Apps"),
                         Triple(1, Icons.Default.List, "Logs"),
-                        Triple(2, Icons.Default.Lock, "Rules"))
+                        Triple(2, Icons.Default.Lock, "Rules")
+                    )
                         .forEach { (idx, icon, label) ->
                             NavigationBarItem(
                                 selected = selectedTab == idx,
-                                onClick  = { selectedTab = idx },
-                                icon     = { Icon(icon, null, Modifier.size(20.dp)) },
-                                label    = { Text(label, fontWeight = FontWeight.Medium, fontSize = 11.sp) },
-                                colors   = NavigationBarItemDefaults.colors(
-                                    selectedIconColor   = PhoenixFlame,
-                                    selectedTextColor   = PhoenixFlame,
+                                onClick = { selectedTab = idx },
+                                icon = { Icon(icon, null, Modifier.size(20.dp)) },
+                                label = { Text(label, fontWeight = FontWeight.Medium, fontSize = 11.sp) },
+                                colors = NavigationBarItemDefaults.colors(
+                                    selectedIconColor = PhoenixFlame,
+                                    selectedTextColor = PhoenixFlame,
                                     unselectedIconColor = c.textSecondary,
                                     unselectedTextColor = c.textSecondary,
-                                    indicatorColor      = PhoenixFlameGhost
+                                    indicatorColor = PhoenixFlameGhost
                                 )
                             )
                         }
@@ -460,12 +475,22 @@ fun MainScreen(navController: NavController, dao: AppDao) {
         },
         floatingActionButton = {
             when (selectedTab) {
-                1 -> AnimatedVisibility(recentLogs.isNotEmpty(), enter = scaleIn() + fadeIn(), exit = scaleOut() + fadeOut()) {
-                    PhoenixFab(onClick = { showClearLogsDialog = true }, icon = Icons.Default.Delete,
-                        color = c.red, contentDescription = "Clear logs")
+                1 -> AnimatedVisibility(
+                    recentLogs.isNotEmpty(),
+                    enter = scaleIn() + fadeIn(),
+                    exit = scaleOut() + fadeOut()
+                ) {
+                    PhoenixFab(
+                        onClick = { showClearLogsDialog = true }, icon = Icons.Default.Delete,
+                        color = c.red, contentDescription = "Clear logs"
+                    )
                 }
-                2 -> PhoenixFab(onClick = { showAddGlobalRuleDialog = true }, icon = Icons.Default.Add,
-                    color = PhoenixFlame, contentDescription = "Add rule")
+
+                2 -> PhoenixFab(
+                    onClick = { showAddGlobalRuleDialog = true }, icon = Icons.Default.Add,
+                    color = PhoenixFlame, contentDescription = "Add rule"
+                )
+
                 else -> {}
             }
         }
@@ -476,7 +501,8 @@ fun MainScreen(navController: NavController, dao: AppDao) {
                     hasEnabledApps = enabledPackages.isNotEmpty(),
                     onStart = {
                         if (enabledPackages.isEmpty()) {
-                            toastMessage = "No apps have filtering enabled.\nGo to the Apps tab and enable at least one."
+                            toastMessage =
+                                "No apps have filtering enabled.\nGo to the Apps tab and enable at least one."
                             showErrorToast = true
                             return@FirewallStatusCard
                         }
@@ -508,23 +534,27 @@ fun MainScreen(navController: NavController, dao: AppDao) {
                             }
                         }
                     }
+
                     1 -> {
                         PhoenixSearchField(logSearchQuery, { logSearchQuery = it }, "Search domains...")
                         if (logSearchQuery.isNotBlank()) {
-                            Text("${filteredLogs.size} of ${recentLogs.size} results",
+                            Text(
+                                "${filteredLogs.size} of ${recentLogs.size} results",
                                 fontSize = 11.sp, color = PhoenixFlameDim,
-                                modifier = Modifier.padding(horizontal = 20.dp, vertical = 2.dp))
+                                modifier = Modifier.padding(horizontal = 20.dp, vertical = 2.dp)
+                            )
                         }
                         GlobalLogList(filteredLogs, globalRules, filterMode, dao, scope, incrementChanges)
                     }
+
                     2 -> GlobalRulesTab(globalRules, filterMode, context, dao, scope, incrementChanges)
                 }
 
                 // ── Save & Apply bar ──────────────────────────────────────
                 SaveApplyBar(
                     onChangeCount = pendingChangesCount,
-                    onSaveApply   = performApply,
-                    modifier      = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                    onSaveApply = performApply,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
                 )
             }
 
@@ -573,9 +603,9 @@ fun PhoenixSearchField(value: String, onValueChange: (String) -> Unit, placehold
 
 @Composable
 fun FirewallStatusCard(hasEnabledApps: Boolean, onStart: () -> Unit, onStop: () -> Unit) {
-    val c         = LocalAppColors.current
+    val c = LocalAppColors.current
     val isRunning by VpnTrackerService.isRunning.collectAsState()
-    val border    = if (isRunning) PhoenixFlame else c.borderMid
+    val border = if (isRunning) PhoenixFlame else c.borderMid
 
     Box(
         Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)
@@ -587,17 +617,23 @@ fun FirewallStatusCard(hasEnabledApps: Boolean, onStart: () -> Unit, onStop: () 
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 PulsingDot(if (isRunning) PhoenixFlame else c.textSecondary, 14.dp)
                 Spacer(Modifier.height(6.dp))
-                Icon(if (isRunning) Icons.Default.Lock else Icons.Default.LockOpen, null,
-                    tint = if (isRunning) PhoenixFlame else c.textSecondary, modifier = Modifier.size(22.dp))
+                Icon(
+                    if (isRunning) Icons.Default.Lock else Icons.Default.LockOpen, null,
+                    tint = if (isRunning) PhoenixFlame else c.textSecondary, modifier = Modifier.size(22.dp)
+                )
             }
             Spacer(Modifier.width(18.dp))
             Column(Modifier.weight(1f)) {
-                Text(if (isRunning) "Firewall Active" else "Firewall Offline",
+                Text(
+                    if (isRunning) "Firewall Active" else "Firewall Offline",
                     fontWeight = FontWeight.Bold, fontSize = 16.sp,
-                    color = if (isRunning) PhoenixFlame else c.textSecondary)
+                    color = if (isRunning) PhoenixFlame else c.textSecondary
+                )
                 Spacer(Modifier.height(2.dp))
-                Text(if (isRunning) "Monitoring DNS traffic" else "Engine is stopped",
-                    fontSize = 12.sp, color = if (isRunning) PhoenixFlame.copy(0.65f) else c.textTertiary)
+                Text(
+                    if (isRunning) "Monitoring DNS traffic" else "Engine is stopped",
+                    fontSize = 12.sp, color = if (isRunning) PhoenixFlame.copy(0.65f) else c.textTertiary
+                )
                 if (!isRunning) {
                     Spacer(Modifier.height(4.dp))
                     Text(
@@ -609,7 +645,7 @@ fun FirewallStatusCard(hasEnabledApps: Boolean, onStart: () -> Unit, onStop: () 
             }
             Spacer(Modifier.width(12.dp))
             if (isRunning) PhoenixButton("Stop", c.red, onClick = onStop)
-            else           PhoenixButton("Start", c.green, onClick = onStart)
+            else PhoenixButton("Start", c.green, onClick = onStart)
         }
     }
 }
@@ -618,19 +654,22 @@ fun FirewallStatusCard(hasEnabledApps: Boolean, onStart: () -> Unit, onStop: () 
 
 @Composable
 fun AppListItem(app: ApplicationInfo, config: AppConfig?, onClick: () -> Unit) {
-    val context   = LocalContext.current
-    val c         = LocalAppColors.current
-    val label     = remember(app.packageName) { context.packageManager.getApplicationLabel(app).toString() }
+    val context = LocalContext.current
+    val c = LocalAppColors.current
+    val label = remember(app.packageName) { context.packageManager.getApplicationLabel(app).toString() }
     val isEnabled = config?.isFilteringEnabled == true
 
     Row(
         Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 2.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Box(Modifier.width(3.dp).height(52.dp).background(
-            Brush.verticalGradient(
-                if (isEnabled) listOf(PhoenixFlame, c.green) else listOf(c.borderMid, c.borderFaint)
-            ), RoundedCornerShape(2.dp)))
+        Box(
+            Modifier.width(3.dp).height(52.dp).background(
+                Brush.verticalGradient(
+                    if (isEnabled) listOf(PhoenixFlame, c.green) else listOf(c.borderMid, c.borderFaint)
+                ), RoundedCornerShape(2.dp)
+            )
+        )
         Spacer(Modifier.width(12.dp))
         Box(
             Modifier.size(38.dp).background(c.cardAlt, PhoenixShapeSmall)
@@ -641,12 +680,18 @@ fun AppListItem(app: ApplicationInfo, config: AppConfig?, onClick: () -> Unit) {
         }
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
-            Text(label, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = c.textPrimary,
-                maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(app.packageName, fontFamily = FontFamily.Monospace, fontSize = 9.sp,
-                color = c.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(
+                label, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = c.textPrimary,
+                maxLines = 1, overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                app.packageName, fontFamily = FontFamily.Monospace, fontSize = 9.sp,
+                color = c.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis
+            )
         }
-        if (isEnabled) { EmberChip("Active", PhoenixFlame); Spacer(Modifier.width(8.dp)) }
+        if (isEnabled) {
+            EmberChip("Active", PhoenixFlame); Spacer(Modifier.width(8.dp))
+        }
         Icon(Icons.Default.ChevronRight, null, tint = c.borderBright, modifier = Modifier.size(16.dp))
     }
     Box(Modifier.fillMaxWidth().padding(start = 31.dp).height(0.5.dp).background(c.borderFaint))
@@ -657,9 +702,12 @@ fun AppIconImage(packageName: String, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     AndroidView(
         factory = { ctx -> ImageView(ctx).apply { scaleType = ImageView.ScaleType.FIT_CENTER } },
-        update  = { view ->
-            try { view.setImageDrawable(context.packageManager.getApplicationIcon(packageName)) }
-            catch (_: Exception) { view.setImageResource(android.R.drawable.sym_def_app_icon) }
+        update = { view ->
+            try {
+                view.setImageDrawable(context.packageManager.getApplicationIcon(packageName))
+            } catch (_: Exception) {
+                view.setImageResource(android.R.drawable.sym_def_app_icon)
+            }
         },
         modifier = modifier
     )
@@ -691,13 +739,17 @@ fun FilterModeCard(currentMode: FilterMode, onModeChange: (FilterMode) -> Unit) 
                                 .padding(horizontal = 12.dp, vertical = 10.dp)
                         ) {
                             Column {
-                                Text(mode.name.lowercase().replaceFirstChar { it.uppercase() },
+                                Text(
+                                    mode.name.lowercase().replaceFirstChar { it.uppercase() },
                                     fontWeight = FontWeight.Bold, fontSize = 12.sp,
-                                    color = if (selected) color else c.textSecondary)
-                                Text(if (mode == FilterMode.BLACKLIST) "Block matched, allow rest"
-                                else "Allow matched, block rest",
+                                    color = if (selected) color else c.textSecondary
+                                )
+                                Text(
+                                    if (mode == FilterMode.BLACKLIST) "Block matched, allow rest"
+                                    else "Allow matched, block rest",
                                     fontSize = 10.sp,
-                                    color = if (selected) color.copy(0.6f) else c.textTertiary)
+                                    color = if (selected) color.copy(0.6f) else c.textTertiary
+                                )
                             }
                         }
                     }
@@ -721,54 +773,173 @@ fun GlobalRulesTab(
     context: android.content.Context, dao: AppDao, scope: CoroutineScope,
     onChanged: () -> Unit = {}
 ) {
-    Column(Modifier.fillMaxSize()) {
-        FilterModeCard(filterMode) { VpnTrackerService.setFilterMode(context, it); onChanged() }
-        ImportExportBar(
-            scope         = "global",
-            rulesProvider = { rules },
-            filterMode    = filterMode,
-            dao           = dao,
-            onChanged     = onChanged
-        )
+    val c = LocalAppColors.current
+    val listStates by FilterListRepo.listStates.collectAsState()
+
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 96.dp)) {
+        item { FilterModeCard(filterMode) { VpnTrackerService.setFilterMode(context, it); onChanged() } }
+        item { FilterListsCard(listStates) }
+        item {
+            ImportExportBar(
+                scope = "global",
+                rulesProvider = { rules },
+                filterMode = filterMode,
+                dao = dao,
+                onChanged = onChanged
+            )
+        }
         if (rules.isEmpty()) {
-            PhoenixEmptyState(Icons.Default.Lock,
-                if (filterMode == FilterMode.BLACKLIST)
-                    "No block rules defined\nAll traffic is permitted\nTap + to add a rule"
-                else "No allow rules defined\nAll traffic is blocked\nTap + to add a rule")
+            item {
+                PhoenixEmptyState(
+                    Icons.Default.Lock,
+                    if (filterMode == FilterMode.BLACKLIST)
+                        "No block rules defined\nAll traffic is permitted\nTap + to add a rule"
+                    else "No allow rules defined\nAll traffic is blocked\nTap + to add a rule"
+                )
+            }
         } else {
-            RulesListContent(rules, dao, scope, onChanged)
+            val allow = rules.filter { it.action == RuleAction.ALLOW }
+            val block = rules.filter { it.action == RuleAction.BLOCK }
+            if (allow.isNotEmpty()) {
+                item { PhoenixSectionHeader("Allow List", c.green) }
+                items(allow, key = { "allow_${it.id}" }) { rule ->
+                    RuleItem(
+                        rule,
+                        onDelete = { scope.launch { dao.deleteRule(rule) } },
+                        onToggle = { scope.launch { dao.setRuleEnabled(rule.id, it) } },
+                        onEdit = { updated -> scope.launch { dao.updateRule(updated) } },
+                        onChanged = onChanged
+                    )
+                }
+            }
+            if (block.isNotEmpty()) {
+                item { PhoenixSectionHeader("Block List", c.red) }
+                items(block, key = { "block_${it.id}" }) { rule ->
+                    RuleItem(
+                        rule,
+                        onDelete = { scope.launch { dao.deleteRule(rule) } },
+                        onToggle = { scope.launch { dao.setRuleEnabled(rule.id, it) } },
+                        onEdit = { updated -> scope.launch { dao.updateRule(updated) } },
+                        onChanged = onChanged
+                    )
+                }
+            }
+        }
+    }
+}
+
+// ── Filter lists card (EasyList toggle & status) ───────────────────────────────
+
+@Composable
+fun FilterListsCard(states: List<ListState>) {
+    val c = LocalAppColors.current
+
+    Column(
+        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)
+            .background(c.card, PhoenixShapeMedium)
+            .border(1.dp, PhoenixFlame.copy(0.2f), PhoenixShapeMedium)
+            .padding(16.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Default.Shield, null, tint = PhoenixFlame, modifier = Modifier.size(16.dp))
+            Spacer(Modifier.width(8.dp))
+            Text("Filter Lists", fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = PhoenixFlame)
+            Spacer(Modifier.weight(1f))
+            val totalRules = states.filter { it.enabled }.sumOf { it.ruleCount }
+            Text(
+                "${totalRules} domains",
+                fontSize = 10.sp, fontFamily = FontFamily.Monospace,
+                color = c.textSecondary.copy(0.7f)
+            )
+        }
+        Spacer(Modifier.height(4.dp))
+        Text(
+            "System-wide ad blocking — applies to all enabled apps",
+            fontSize = 10.sp, color = c.textSecondary.copy(0.6f)
+        )
+        Spacer(Modifier.height(10.dp))
+
+        states.forEach { state ->
+            FilterListRow(state)
         }
     }
 }
 
 @Composable
-fun RulesListContent(rules: List<FilterRule>, dao: AppDao, scope: CoroutineScope, onChanged: () -> Unit = {}) {
+private fun FilterListRow(state: ListState) {
     val c = LocalAppColors.current
-    // Bottom padding clears the floating "+" button so the last rule's
-    // edit/delete actions are never hidden behind the FAB.
-    LazyColumn(contentPadding = PaddingValues(bottom = 96.dp)) {
-        val allow = rules.filter { it.action == RuleAction.ALLOW }
-        val block  = rules.filter { it.action == RuleAction.BLOCK }
-        if (allow.isNotEmpty()) {
-            item { PhoenixSectionHeader("Allow List", c.green) }
-            items(allow, key = { it.id }) { rule ->
-                RuleItem(rule,
-                    onDelete  = { scope.launch { dao.deleteRule(rule) } },
-                    onToggle  = { scope.launch { dao.setRuleEnabled(rule.id, it) } },
-                    onEdit    = { updated -> scope.launch { dao.updateRule(updated) } },
-                    onChanged = onChanged)
+    val accent = if (state.enabled) PhoenixFlame else c.borderMid
+
+    Row(
+        Modifier.fillMaxWidth()
+            .padding(vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        // Status dot
+        Box(Modifier.size(8.dp), contentAlignment = Alignment.Center) {
+            Box(
+                Modifier.size(8.dp)
+                    .background(
+                        when (state.status) {
+                            ListStatus.LOADING -> c.gold.copy(0.6f)
+                            ListStatus.UPDATING -> c.gold.copy(0.6f)
+                            ListStatus.UPDATE_FAILED -> c.red.copy(0.5f)
+                            ListStatus.EMPTY -> c.borderMid
+                            ListStatus.READY -> accent.copy(0.8f)
+                        },
+                        RoundedCornerShape(50)
+                    )
+            )
+        }
+        Spacer(Modifier.width(10.dp))
+
+        Column(Modifier.weight(1f)) {
+            Text(
+                state.info.displayName,
+                fontWeight = FontWeight.SemiBold, fontSize = 12.sp,
+                color = if (state.enabled) c.textPrimary else c.textSecondary
+            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    state.info.description,
+                    fontSize = 10.sp, color = c.textTertiary
+                )
+                if (state.enabled && state.ruleCount > 0) {
+                    Text(
+                        "  •  ${state.ruleCount} rules",
+                        fontSize = 10.sp, fontFamily = FontFamily.Monospace,
+                        color = c.textSecondary.copy(0.6f)
+                    )
+                }
+                if (state.status == ListStatus.UPDATING) {
+                    Text(
+                        "  •  updating…",
+                        fontSize = 10.sp, color = c.gold.copy(0.7f)
+                    )
+                }
+                if (state.status == ListStatus.UPDATE_FAILED) {
+                    Text(
+                        "  •  update failed",
+                        fontSize = 10.sp, color = c.red.copy(0.7f)
+                    )
+                }
             }
         }
-        if (block.isNotEmpty()) {
-            item { PhoenixSectionHeader("Block List", c.red) }
-            items(block, key = { it.id }) { rule ->
-                RuleItem(rule,
-                    onDelete  = { scope.launch { dao.deleteRule(rule) } },
-                    onToggle  = { scope.launch { dao.setRuleEnabled(rule.id, it) } },
-                    onEdit    = { updated -> scope.launch { dao.updateRule(updated) } },
-                    onChanged = onChanged)
-            }
-        }
+
+        Spacer(Modifier.width(8.dp))
+
+        // Toggle switch
+        Switch(
+            checked = state.enabled,
+            onCheckedChange = { FilterListRepo.setEnabled(state.info, it) },
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = PhoenixFlame,
+                checkedTrackColor = PhoenixFlame.copy(0.25f),
+                uncheckedThumbColor = c.textTertiary,
+                uncheckedTrackColor = c.borderMid.copy(0.3f)
+            ),
+            modifier = Modifier.scale(0.8f)
+        )
     }
 }
 
@@ -789,11 +960,11 @@ fun GlobalLogList(
     LazyColumn(contentPadding = PaddingValues(bottom = 96.dp)) {
         items(logs, key = { it.id }) { log ->
             LogItemExtended(
-                log        = log,
-                rules      = globalRules,
+                log = log,
+                rules = globalRules,
                 filterMode = filterMode,
-                onAddRule  = { rule -> scope.launch { dao.insertRule(rule.copy(packageName = null)) } },
-                onChanged  = onChanged
+                onAddRule = { rule -> scope.launch { dao.insertRule(rule.copy(packageName = null)) } },
+                onChanged = onChanged
             )
         }
     }
@@ -806,8 +977,10 @@ fun AppTrafficList(
     onChanged: () -> Unit = {}
 ) {
     if (logs.isEmpty()) {
-        PhoenixEmptyState(Icons.Default.Info,
-            "No DNS activity yet\nEnable firewall for this app\nthen start the engine")
+        PhoenixEmptyState(
+            Icons.Default.Info,
+            "No DNS activity yet\nEnable firewall for this app\nthen start the engine"
+        )
         return
     }
     // Bottom padding clears the floating trash button so the last log row
@@ -815,11 +988,11 @@ fun AppTrafficList(
     LazyColumn(contentPadding = PaddingValues(bottom = 96.dp)) {
         items(logs, key = { it.id }) { log ->
             LogItemExtended(
-                log        = log,
-                rules      = allRules,
+                log = log,
+                rules = allRules,
                 filterMode = filterMode,
-                onAddRule  = { rule -> scope.launch { dao.insertRule(rule.copy(packageName = packageName)) } },
-                onChanged  = onChanged
+                onAddRule = { rule -> scope.launch { dao.insertRule(rule.copy(packageName = packageName)) } },
+                onChanged = onChanged
             )
         }
     }
@@ -848,33 +1021,39 @@ fun LogItemExtended(
 
     if (showAddDialog) {
         AddRuleDialog(
-            title          = "Add Rule",
+            title = "Add Rule",
             initialPattern = log.domain,
             initialMatchType = MatchType.SUBDOMAIN,
-            initialAction  = if (filterMode == FilterMode.WHITELIST) RuleAction.ALLOW else RuleAction.BLOCK,
-            onDismiss      = { showAddDialog = false },
-            onAdd          = { rule -> onAddRule(rule); onChanged() }
+            initialAction = if (filterMode == FilterMode.WHITELIST) RuleAction.ALLOW else RuleAction.BLOCK,
+            onDismiss = { showAddDialog = false },
+            onAdd = { rule -> onAddRule(rule); onChanged() }
         )
     }
 
     val accentColor = when (matchingRule?.action) {
         RuleAction.BLOCK -> c.red
         RuleAction.ALLOW -> c.green
-        null             -> c.borderMid
+        null -> c.borderMid
     }
 
     Row(
         Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 2.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Box(Modifier.width(2.dp).height(44.dp)
-            .background(accentColor.copy(if (matchingRule != null) 0.8f else 0.2f), RoundedCornerShape(1.dp)))
+        Box(
+            Modifier.width(2.dp).height(44.dp)
+                .background(accentColor.copy(if (matchingRule != null) 0.8f else 0.2f), RoundedCornerShape(1.dp))
+        )
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
-            Text(log.domain, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Medium,
-                fontSize = 12.sp, color = c.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(remember(log.timestamp) { logDateFormat.format(Date(log.timestamp)) },
-                fontFamily = FontFamily.Monospace, fontSize = 9.sp, color = c.textSecondary)
+            Text(
+                log.domain, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Medium,
+                fontSize = 12.sp, color = c.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                remember(log.timestamp) { logDateFormat.format(Date(log.timestamp)) },
+                fontFamily = FontFamily.Monospace, fontSize = 9.sp, color = c.textSecondary
+            )
         }
         Spacer(Modifier.width(8.dp))
         when (matchingRule?.action) {
@@ -896,20 +1075,20 @@ fun RuleItem(
     onEdit: (FilterRule) -> Unit,
     onChanged: () -> Unit = {}
 ) {
-    val c     = LocalAppColors.current
+    val c = LocalAppColors.current
     val color = if (rule.action == RuleAction.BLOCK) c.red else c.green
 
-    var showEditDialog   by remember { mutableStateOf(false) }
+    var showEditDialog by remember { mutableStateOf(false) }
     var showDeleteDialog by remember { mutableStateOf(false) }
 
     if (showEditDialog) {
         AddRuleDialog(
-            title            = "Edit Rule",
-            initialPattern   = rule.pattern,
+            title = "Edit Rule",
+            initialPattern = rule.pattern,
             initialMatchType = rule.matchType,
-            initialAction    = rule.action,
-            onDismiss        = { showEditDialog = false },
-            onAdd            = { updated ->
+            initialAction = rule.action,
+            onDismiss = { showEditDialog = false },
+            onAdd = { updated ->
                 // Preserve id, packageName, isEnabled from the original rule
                 onEdit(updated.copy(id = rule.id, packageName = rule.packageName, isEnabled = rule.isEnabled))
                 onChanged()
@@ -920,7 +1099,7 @@ fun RuleItem(
     if (showDeleteDialog) {
         PhoenixAlertDialog(
             title = "Delete Rule",
-            text  = "Delete the ${rule.action.name.lowercase()} rule for \"${rule.pattern}\"? This cannot be undone.",
+            text = "Delete the ${rule.action.name.lowercase()} rule for \"${rule.pattern}\"? This cannot be undone.",
             confirmText = "Delete",
             confirmColor = c.red,
             onConfirm = { onDelete(); onChanged(); showDeleteDialog = false },
@@ -933,19 +1112,25 @@ fun RuleItem(
             .padding(horizontal = 16.dp, vertical = 2.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Box(Modifier.width(2.dp).height(50.dp)
-            .background(color.copy(if (rule.isEnabled) 0.8f else 0.3f), RoundedCornerShape(1.dp)))
+        Box(
+            Modifier.width(2.dp).height(50.dp)
+                .background(color.copy(if (rule.isEnabled) 0.8f else 0.3f), RoundedCornerShape(1.dp))
+        )
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 EmberChip(rule.matchType.displayName(), color)
                 Spacer(Modifier.width(8.dp))
-                Text(rule.pattern, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.SemiBold,
-                    fontSize = 12.sp, color = c.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                    rule.pattern, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.SemiBold,
+                    fontSize = 12.sp, color = c.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis
+                )
             }
             Spacer(Modifier.height(2.dp))
-            Text("${if (rule.action == RuleAction.BLOCK) "Block" else "Allow"} · ${rule.matchType.description()}",
-                fontSize = 10.sp, color = c.textSecondary)
+            Text(
+                "${if (rule.action == RuleAction.BLOCK) "Block" else "Allow"} · ${rule.matchType.description()}",
+                fontSize = 10.sp, color = c.textSecondary
+            )
         }
         Switch(
             checked = rule.isEnabled, onCheckedChange = { onToggle(it); onChanged() },
@@ -972,35 +1157,37 @@ fun RuleItem(
 @Composable
 fun AppDetailScreen(navController: NavController, dao: AppDao, packageName: String) {
     val context = LocalContext.current
-    val scope   = rememberCoroutineScope()
-    val c       = LocalAppColors.current
+    val scope = rememberCoroutineScope()
+    val c = LocalAppColors.current
 
     // ── Pending changes & snapshot tracking ──────────────────────────────────
     var pendingChangesCount by remember { mutableIntStateOf(0) }
-    var showUnsavedDialog   by remember { mutableStateOf(false) }
-    val isRunning           by VpnTrackerService.isRunning.collectAsState()
+    var showUnsavedDialog by remember { mutableStateOf(false) }
+    val isRunning by VpnTrackerService.isRunning.collectAsState()
 
     val incrementChanges: () -> Unit = { pendingChangesCount++ }
-    val clearChanges:     () -> Unit = { pendingChangesCount = 0 }
+    val clearChanges: () -> Unit = { pendingChangesCount = 0 }
 
     // ── Snapshot for discard ────────────────────────────────────────────────
     var snapshotAppConfig by remember { mutableStateOf<AppConfig?>(null) }
-    var snapshotAppRules  by remember { mutableStateOf<List<FilterRule>>(emptyList()) }
+    var snapshotAppRules by remember { mutableStateOf<List<FilterRule>>(emptyList()) }
 
     val label = remember(packageName) {
         try {
             context.packageManager.getApplicationLabel(
                 context.packageManager.getApplicationInfo(packageName, 0)
             ).toString()
-        } catch (_: Exception) { packageName }
+        } catch (_: Exception) {
+            packageName
+        }
     }
 
-    val configs       by dao.getAllAppConfigs().collectAsState(initial = emptyList())
-    val appConfig     = configs.find { it.packageName == packageName }
-    val appRules      by dao.getAppRules(packageName).collectAsState(initial = emptyList())
-    val globalRules   by dao.getGlobalRules().collectAsState(initial = emptyList())
-    val allLogs       by dao.getRecentLogs().collectAsState(initial = emptyList())
-    val filterMode    by VpnTrackerService.filterMode.collectAsState()
+    val configs by dao.getAllAppConfigs().collectAsState(initial = emptyList())
+    val appConfig = configs.find { it.packageName == packageName }
+    val appRules by dao.getAppRules(packageName).collectAsState(initial = emptyList())
+    val globalRules by dao.getGlobalRules().collectAsState(initial = emptyList())
+    val allLogs by dao.getRecentLogs().collectAsState(initial = emptyList())
+    val filterMode by VpnTrackerService.filterMode.collectAsState()
     val combinedRules = remember(appRules, globalRules) { appRules + globalRules }
     val anyEnabledApps = remember(configs) { configs.any { it.isFilteringEnabled } }
 
@@ -1008,7 +1195,7 @@ fun AppDetailScreen(navController: NavController, dao: AppDao, packageName: Stri
     LaunchedEffect(Unit) {
         kotlinx.coroutines.delay(150)
         snapshotAppConfig = appConfig
-        snapshotAppRules  = appRules
+        snapshotAppRules = appRules
     }
 
     val performApply: () -> Unit = {
@@ -1048,10 +1235,10 @@ fun AppDetailScreen(navController: NavController, dao: AppDao, packageName: Stri
 
     BackHandler(onBack = handleBackRequest)
 
-    var selectedSection     by remember { mutableIntStateOf(0) }
-    var showAddRuleDialog   by remember { mutableStateOf(false) }
+    var selectedSection by remember { mutableIntStateOf(0) }
+    var showAddRuleDialog by remember { mutableStateOf(false) }
     var showClearLogsDialog by remember { mutableStateOf(false) }
-    var logSearchQuery      by remember { mutableStateOf("") }
+    var logSearchQuery by remember { mutableStateOf("") }
 
     val filteredLogs = remember(allLogs, logSearchQuery) {
         if (logSearchQuery.isBlank()) allLogs
@@ -1096,33 +1283,61 @@ fun AppDetailScreen(navController: NavController, dao: AppDao, packageName: Stri
         containerColor = c.background,
         topBar = {
             Box(Modifier.fillMaxWidth().background(c.surface).statusBarsPadding()) {
-                Row(Modifier.padding(horizontal = 4.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = handleBackRequest) { Icon(Icons.Default.ArrowBack, "Back", tint = PhoenixFlame) }
+                Row(
+                    Modifier.padding(horizontal = 4.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = handleBackRequest) {
+                        Icon(
+                            Icons.Default.ArrowBack,
+                            "Back",
+                            tint = PhoenixFlame
+                        )
+                    }
                     Box(
                         Modifier.size(32.dp).background(c.cardAlt, PhoenixShapeSmall)
                             .border(0.5.dp, PhoenixFlame.copy(0.3f), PhoenixShapeSmall).clip(PhoenixShapeSmall)
                     ) { AppIconImage(packageName, Modifier.fillMaxSize().padding(3.dp)) }
                     Spacer(Modifier.width(10.dp))
                     Column {
-                        Text(label, fontWeight = FontWeight.Bold, fontSize = 15.sp, color = PhoenixFlame,
-                            maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text(packageName, fontFamily = FontFamily.Monospace, fontSize = 9.sp,
-                            color = c.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(
+                            label, fontWeight = FontWeight.Bold, fontSize = 15.sp, color = PhoenixFlame,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            packageName, fontFamily = FontFamily.Monospace, fontSize = 9.sp,
+                            color = c.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis
+                        )
                     }
                 }
-                Box(Modifier.fillMaxWidth().height(1.dp).align(Alignment.BottomStart)
-                    .background(Brush.horizontalGradient(
-                        listOf(PhoenixFlame.copy(0.5f), PhoenixFlame.copy(0.1f), Color.Transparent))))
+                Box(
+                    Modifier.fillMaxWidth().height(1.dp).align(Alignment.BottomStart)
+                        .background(
+                            Brush.horizontalGradient(
+                                listOf(PhoenixFlame.copy(0.5f), PhoenixFlame.copy(0.1f), Color.Transparent)
+                            )
+                        )
+                )
             }
         },
         floatingActionButton = {
             when (selectedSection) {
-                0 -> AnimatedVisibility(allLogs.isNotEmpty(), enter = scaleIn() + fadeIn(), exit = scaleOut() + fadeOut()) {
-                    PhoenixFab(onClick = { showClearLogsDialog = true }, icon = Icons.Default.Delete,
-                        color = c.red, contentDescription = "Clear logs")
+                0 -> AnimatedVisibility(
+                    allLogs.isNotEmpty(),
+                    enter = scaleIn() + fadeIn(),
+                    exit = scaleOut() + fadeOut()
+                ) {
+                    PhoenixFab(
+                        onClick = { showClearLogsDialog = true }, icon = Icons.Default.Delete,
+                        color = c.red, contentDescription = "Clear logs"
+                    )
                 }
-                1 -> PhoenixFab(onClick = { showAddRuleDialog = true }, icon = Icons.Default.Add,
-                    color = PhoenixFlame, contentDescription = "Add rule")
+
+                1 -> PhoenixFab(
+                    onClick = { showAddRuleDialog = true }, icon = Icons.Default.Add,
+                    color = PhoenixFlame, contentDescription = "Add rule"
+                )
+
                 else -> {}
             }
         }
@@ -1134,9 +1349,11 @@ fun AppDetailScreen(navController: NavController, dao: AppDao, packageName: Stri
             Box(
                 Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)
                     .background(c.card, PhoenixShapeMedium)
-                    .border(1.dp,
+                    .border(
+                        1.dp,
                         if (appConfig?.isFilteringEnabled == true) c.green.copy(0.35f) else c.borderMid,
-                        PhoenixShapeMedium)
+                        PhoenixShapeMedium
+                    )
                     .padding(horizontal = 16.dp, vertical = 12.dp)
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1172,17 +1389,21 @@ fun AppDetailScreen(navController: NavController, dao: AppDao, packageName: Stri
             ) {
                 listOf("DNS Activity", "App Rules").forEachIndexed { idx, tabLabel ->
                     val selected = selectedSection == idx
-                    val display  = if (idx == 1 && appRules.isNotEmpty()) "$tabLabel  ${appRules.size}" else tabLabel
+                    val display = if (idx == 1 && appRules.isNotEmpty()) "$tabLabel  ${appRules.size}" else tabLabel
                     Box(
                         Modifier.weight(1f)
                             .background(if (selected) PhoenixFlameGhost else Color.Transparent, PhoenixShapeSmall)
-                            .border(if (selected) 1.dp else 0.dp,
-                                if (selected) PhoenixFlame.copy(0.4f) else Color.Transparent, PhoenixShapeSmall)
+                            .border(
+                                if (selected) 1.dp else 0.dp,
+                                if (selected) PhoenixFlame.copy(0.4f) else Color.Transparent, PhoenixShapeSmall
+                            )
                             .clickable { selectedSection = idx }.padding(vertical = 8.dp),
                         contentAlignment = Alignment.Center
                     ) {
-                        Text(display, fontWeight = FontWeight.SemiBold, fontSize = 12.sp,
-                            color = if (selected) PhoenixFlame else c.textSecondary)
+                        Text(
+                            display, fontWeight = FontWeight.SemiBold, fontSize = 12.sp,
+                            color = if (selected) PhoenixFlame else c.textSecondary
+                        )
                     }
                 }
             }
@@ -1193,20 +1414,30 @@ fun AppDetailScreen(navController: NavController, dao: AppDao, packageName: Stri
                     Column(Modifier.fillMaxSize()) {
                         PhoenixSearchField(logSearchQuery, { logSearchQuery = it }, "Search domains...")
                         if (logSearchQuery.isNotBlank()) {
-                            Text("${filteredLogs.size} of ${allLogs.size} results",
+                            Text(
+                                "${filteredLogs.size} of ${allLogs.size} results",
                                 fontSize = 11.sp, color = PhoenixFlameDim,
-                                modifier = Modifier.padding(horizontal = 20.dp, vertical = 2.dp))
+                                modifier = Modifier.padding(horizontal = 20.dp, vertical = 2.dp)
+                            )
                         }
-                        AppTrafficList(filteredLogs, combinedRules, filterMode, packageName, dao, scope, incrementChanges)
+                        AppTrafficList(
+                            filteredLogs,
+                            combinedRules,
+                            filterMode,
+                            packageName,
+                            dao,
+                            scope,
+                            incrementChanges
+                        )
                     }
                 } else {
                     Column(Modifier.fillMaxSize()) {
                         ImportExportBar(
-                            scope         = "app:$packageName",
+                            scope = "app:$packageName",
                             rulesProvider = { appRules },
-                            filterMode    = null,
-                            dao           = dao,
-                            onChanged     = incrementChanges
+                            filterMode = null,
+                            dao = dao,
+                            onChanged = incrementChanges
                         )
                         AppRulesList(appRules, label, globalRules.size, dao, scope, incrementChanges)
                     }
@@ -1216,8 +1447,8 @@ fun AppDetailScreen(navController: NavController, dao: AppDao, packageName: Stri
             // ── Save & Apply bar ──────────────────────────────────────────
             SaveApplyBar(
                 onChangeCount = pendingChangesCount,
-                onSaveApply   = performApply,
-                modifier      = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                onSaveApply = performApply,
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
             )
         }
     }
@@ -1226,7 +1457,14 @@ fun AppDetailScreen(navController: NavController, dao: AppDao, packageName: Stri
 // ── App rules list ────────────────────────────────────────────────────────────
 
 @Composable
-fun AppRulesList(rules: List<FilterRule>, appLabel: String, globalCount: Int, dao: AppDao, scope: CoroutineScope, onChanged: () -> Unit = {}) {
+fun AppRulesList(
+    rules: List<FilterRule>,
+    appLabel: String,
+    globalCount: Int,
+    dao: AppDao,
+    scope: CoroutineScope,
+    onChanged: () -> Unit = {}
+) {
     val c = LocalAppColors.current
     Column(Modifier.fillMaxSize()) {
         if (globalCount > 0) {
@@ -1238,13 +1476,17 @@ fun AppRulesList(rules: List<FilterRule>, appLabel: String, globalCount: Int, da
             ) {
                 Icon(Icons.Default.Info, null, Modifier.size(14.dp), tint = c.gold)
                 Spacer(Modifier.width(8.dp))
-                Text("$globalCount global rule${if (globalCount != 1) "s" else ""} also apply to this app",
-                    fontSize = 11.sp, color = c.gold.copy(0.9f))
+                Text(
+                    "$globalCount global rule${if (globalCount != 1) "s" else ""} also apply to this app",
+                    fontSize = 11.sp, color = c.gold.copy(0.9f)
+                )
             }
         }
         if (rules.isEmpty()) {
-            PhoenixEmptyState(Icons.Default.Lock,
-                "No app-specific rules\nTap + to add one\nor tap Add Rule in DNS Activity")
+            PhoenixEmptyState(
+                Icons.Default.Lock,
+                "No app-specific rules\nTap + to add one\nor tap Add Rule in DNS Activity"
+            )
         } else {
             // Bottom padding clears the floating "+" button so the last rule's
             // edit/delete actions are never hidden behind the FAB.
@@ -1253,26 +1495,30 @@ fun AppRulesList(rules: List<FilterRule>, appLabel: String, globalCount: Int, da
                 contentPadding = PaddingValues(bottom = 96.dp)
             ) {
                 val allow = rules.filter { it.action == RuleAction.ALLOW }
-                val block  = rules.filter { it.action == RuleAction.BLOCK }
+                val block = rules.filter { it.action == RuleAction.BLOCK }
                 if (allow.isNotEmpty()) {
                     item { PhoenixSectionHeader("Allow Rules", c.green) }
                     items(allow, key = { it.id }) { rule ->
-                        RuleItem(rule,
-                            onDelete  = { scope.launch { dao.deleteRule(rule) } },
-                            onToggle  = { scope.launch { dao.setRuleEnabled(rule.id, it) } },
-                            onEdit    = { updated -> scope.launch { dao.updateRule(updated) } },
-                            onChanged = onChanged)
+                        RuleItem(
+                            rule,
+                            onDelete = { scope.launch { dao.deleteRule(rule) } },
+                            onToggle = { scope.launch { dao.setRuleEnabled(rule.id, it) } },
+                            onEdit = { updated -> scope.launch { dao.updateRule(updated) } },
+                            onChanged = onChanged
+                        )
 
                     }
                 }
                 if (block.isNotEmpty()) {
                     item { PhoenixSectionHeader("Block Rules", c.red) }
                     items(block, key = { it.id }) { rule ->
-                        RuleItem(rule,
-                            onDelete  = { scope.launch { dao.deleteRule(rule) } },
-                            onToggle  = { scope.launch { dao.setRuleEnabled(rule.id, it) } },
-                            onEdit    = { updated -> scope.launch { dao.updateRule(updated) } },
-                            onChanged = onChanged)
+                        RuleItem(
+                            rule,
+                            onDelete = { scope.launch { dao.deleteRule(rule) } },
+                            onToggle = { scope.launch { dao.setRuleEnabled(rule.id, it) } },
+                            onEdit = { updated -> scope.launch { dao.updateRule(updated) } },
+                            onChanged = onChanged
+                        )
 
                     }
                 }
@@ -1287,17 +1533,17 @@ fun AppRulesList(rules: List<FilterRule>, appLabel: String, globalCount: Int, da
 @Composable
 fun AddRuleDialog(
     title: String,
-    initialPattern:   String     = "",
-    initialMatchType: MatchType  = MatchType.SUBDOMAIN,
-    initialAction:    RuleAction = RuleAction.BLOCK,
+    initialPattern: String = "",
+    initialMatchType: MatchType = MatchType.SUBDOMAIN,
+    initialAction: RuleAction = RuleAction.BLOCK,
     onDismiss: () -> Unit,
     onAdd: (FilterRule) -> Unit
 ) {
     val c = LocalAppColors.current
     // remember keyed to initial values so re-opening for different rules resets state
-    var pattern      by remember(initialPattern)   { mutableStateOf(initialPattern) }
-    var matchType    by remember(initialMatchType) { mutableStateOf(initialMatchType) }
-    var action       by remember(initialAction)    { mutableStateOf(initialAction) }
+    var pattern by remember(initialPattern) { mutableStateOf(initialPattern) }
+    var matchType by remember(initialMatchType) { mutableStateOf(initialMatchType) }
+    var action by remember(initialAction) { mutableStateOf(initialAction) }
     var menuExpanded by remember { mutableStateOf(false) }
     val trimmed = pattern.trim().lowercase()
 
@@ -1306,15 +1552,15 @@ fun AddRuleDialog(
     val matchExamples = remember(matchType, trimmed, action) {
         generateMatchExamples(trimmed, matchType)
     }
-    val previewLabel     = if (action == RuleAction.BLOCK) "This rule will BLOCK:" else "This rule will ALLOW:"
-    val previewColor     = if (action == RuleAction.BLOCK) c.red else c.green
-    val previewGhost     = if (action == RuleAction.BLOCK) c.red.copy(0.08f) else c.green.copy(0.08f)
+    val previewLabel = if (action == RuleAction.BLOCK) "This rule will BLOCK:" else "This rule will ALLOW:"
+    val previewColor = if (action == RuleAction.BLOCK) c.red else c.green
+    val previewGhost = if (action == RuleAction.BLOCK) c.red.copy(0.08f) else c.green.copy(0.08f)
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        containerColor   = c.surface,
-        tonalElevation   = 0.dp,
-        shape            = PhoenixShapeLarge,
+        containerColor = c.surface,
+        tonalElevation = 0.dp,
+        shape = PhoenixShapeLarge,
         title = { Text(title, fontWeight = FontWeight.Bold, color = PhoenixFlame) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -1328,9 +1574,11 @@ fun AddRuleDialog(
                                 .clickable { action = a }.padding(vertical = 10.dp),
                             contentAlignment = Alignment.Center
                         ) {
-                            Text(a.name.lowercase().replaceFirstChar { it.uppercase() },
+                            Text(
+                                a.name.lowercase().replaceFirstChar { it.uppercase() },
                                 fontWeight = FontWeight.Bold, fontSize = 12.sp,
-                                color = if (action == a) color else c.textSecondary)
+                                color = if (action == a) color else c.textSecondary
+                            )
                         }
                     }
                 }
@@ -1343,22 +1591,22 @@ fun AddRuleDialog(
                     placeholder = {
                         Text(
                             when (matchType) {
-                                MatchType.WILDCARD  -> "*.example.com"
-                                MatchType.PREFIX    -> "ads."
-                                MatchType.SUFFIX    -> ".doubleclick.net"
-                                MatchType.CONTAINS  -> "tracker"
-                                MatchType.EXACT     -> "ads.example.com"
+                                MatchType.WILDCARD -> "*.example.com"
+                                MatchType.PREFIX -> "ads."
+                                MatchType.SUFFIX -> ".doubleclick.net"
+                                MatchType.CONTAINS -> "tracker"
+                                MatchType.EXACT -> "ads.example.com"
                                 MatchType.SUBDOMAIN -> "example.com"
                             },
                             fontFamily = FontFamily.Monospace, fontSize = 12.sp, color = c.textTertiary
                         )
                     },
                     colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor   = PhoenixFlame.copy(0.6f),
+                        focusedBorderColor = PhoenixFlame.copy(0.6f),
                         unfocusedBorderColor = c.borderMid,
-                        focusedTextColor     = c.textPrimary, unfocusedTextColor = c.textPrimary,
-                        cursorColor          = PhoenixFlame,
-                        focusedLabelColor    = PhoenixFlame, unfocusedLabelColor = c.textSecondary
+                        focusedTextColor = c.textPrimary, unfocusedTextColor = c.textPrimary,
+                        cursorColor = PhoenixFlame,
+                        focusedLabelColor = PhoenixFlame, unfocusedLabelColor = c.textSecondary
                     ),
                     textStyle = LocalTextStyle.current.copy(fontFamily = FontFamily.Monospace, fontSize = 13.sp)
                 )
@@ -1378,11 +1626,14 @@ fun AddRuleDialog(
                         matchExamples.take(4).forEach { ex ->
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Box(
-                                    Modifier.size(6.dp).background(previewColor, androidx.compose.foundation.shape.CircleShape)
+                                    Modifier.size(6.dp)
+                                        .background(previewColor, androidx.compose.foundation.shape.CircleShape)
                                 )
                                 Spacer(Modifier.width(6.dp))
-                                Text(ex, fontFamily = FontFamily.Monospace,
-                                    fontWeight = FontWeight.Medium, fontSize = 11.sp, color = c.textPrimary)
+                                Text(
+                                    ex, fontFamily = FontFamily.Monospace,
+                                    fontWeight = FontWeight.Medium, fontSize = 11.sp, color = c.textPrimary
+                                )
                             }
                         }
                         if (matchExamples.size > 4) {
@@ -1401,10 +1652,10 @@ fun AddRuleDialog(
                         label = { Text("Match Type", fontSize = 12.sp) },
                         trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(menuExpanded) },
                         colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor   = PhoenixFlame.copy(0.6f),
+                            focusedBorderColor = PhoenixFlame.copy(0.6f),
                             unfocusedBorderColor = c.borderMid,
-                            focusedTextColor     = c.textPrimary, unfocusedTextColor = c.textPrimary,
-                            focusedLabelColor    = PhoenixFlame, unfocusedLabelColor = c.textSecondary
+                            focusedTextColor = c.textPrimary, unfocusedTextColor = c.textPrimary,
+                            focusedLabelColor = PhoenixFlame, unfocusedLabelColor = c.textSecondary
                         ),
                         textStyle = LocalTextStyle.current.copy(fontSize = 12.sp)
                     )
@@ -1416,20 +1667,24 @@ fun AddRuleDialog(
                             DropdownMenuItem(
                                 text = {
                                     Column {
-                                        Text(type.displayName(), fontWeight = FontWeight.SemiBold,
-                                            fontSize = 13.sp, color = PhoenixFlame)
+                                        Text(
+                                            type.displayName(), fontWeight = FontWeight.SemiBold,
+                                            fontSize = 13.sp, color = PhoenixFlame
+                                        )
                                         Text(type.description(), fontSize = 11.sp, color = c.textSecondary)
                                         // Extra hint for wildcard
                                         if (type == MatchType.WILDCARD) {
                                             Spacer(Modifier.height(2.dp))
-                                            Text("e.g. *.ads.com  •  tracker.*  •  *doubleclick*",
+                                            Text(
+                                                "e.g. *.ads.com  •  tracker.*  •  *doubleclick*",
                                                 fontFamily = FontFamily.Monospace,
-                                                fontSize = 9.sp, color = PhoenixFlameDim)
+                                                fontSize = 9.sp, color = PhoenixFlameDim
+                                            )
                                         }
                                     }
                                 },
                                 onClick = { matchType = type; menuExpanded = false },
-                                colors  = MenuDefaults.itemColors(textColor = c.textPrimary)
+                                colors = MenuDefaults.itemColors(textColor = c.textPrimary)
                             )
                         }
                     }
@@ -1439,8 +1694,8 @@ fun AddRuleDialog(
         confirmButton = {
             val btnColor = if (action == RuleAction.BLOCK) c.red else c.green
             PhoenixButton(
-                text    = if (action == RuleAction.BLOCK) "Block" else "Allow",
-                color   = btnColor,
+                text = if (action == RuleAction.BLOCK) "Block" else "Allow",
+                color = btnColor,
                 enabled = trimmed.isNotBlank(),
                 onClick = {
                     onAdd(FilterRule(packageName = null, pattern = trimmed, matchType = matchType, action = action))
@@ -1462,9 +1717,9 @@ fun PhoenixAlertDialog(
     val c = LocalAppColors.current
     AlertDialog(
         onDismissRequest = onDismiss,
-        containerColor   = c.surface, tonalElevation = 0.dp, shape = PhoenixShapeLarge,
-        title  = { Text(title, fontWeight = FontWeight.Bold, color = confirmColor) },
-        text   = { Text(text, fontSize = 13.sp, color = c.textSecondary) },
+        containerColor = c.surface, tonalElevation = 0.dp, shape = PhoenixShapeLarge,
+        title = { Text(title, fontWeight = FontWeight.Bold, color = confirmColor) },
+        text = { Text(text, fontSize = 13.sp, color = c.textSecondary) },
         confirmButton = { PhoenixButton(confirmText, confirmColor, onClick = onConfirm) },
         dismissButton = { PhoenixButton("Cancel", c.textSecondary, onClick = onDismiss) }
     )
@@ -1482,8 +1737,10 @@ fun PhoenixButton(text: String, color: Color, onClick: () -> Unit, enabled: Bool
             .padding(horizontal = 16.dp, vertical = 8.dp),
         contentAlignment = Alignment.Center
     ) {
-        Text(text, fontWeight = FontWeight.SemiBold, fontSize = 12.sp,
-            color = color.copy(if (enabled) 1f else 0.4f))
+        Text(
+            text, fontWeight = FontWeight.SemiBold, fontSize = 12.sp,
+            color = color.copy(if (enabled) 1f else 0.4f)
+        )
     }
 }
 
@@ -1521,8 +1778,10 @@ fun PhoenixEmptyState(icon: androidx.compose.ui.graphics.vector.ImageVector, mes
     ) {
         Icon(icon, null, Modifier.size(52.dp), tint = PhoenixFlame.copy(0.15f))
         Spacer(Modifier.height(20.dp))
-        Text(message, textAlign = TextAlign.Center, fontSize = 13.sp,
-            lineHeight = 20.sp, color = c.textSecondary.copy(0.7f))
+        Text(
+            message, textAlign = TextAlign.Center, fontSize = 13.sp,
+            lineHeight = 20.sp, color = c.textSecondary.copy(0.7f)
+        )
     }
 }
 
@@ -1537,9 +1796,9 @@ fun UnsavedChangesDialog(
     val c = LocalAppColors.current
     AlertDialog(
         onDismissRequest = onDismiss,
-        containerColor   = c.surface,
-        tonalElevation   = 0.dp,
-        shape            = PhoenixShapeLarge,
+        containerColor = c.surface,
+        tonalElevation = 0.dp,
+        shape = PhoenixShapeLarge,
         icon = {
             Icon(Icons.Default.Warning, null, Modifier.size(40.dp), tint = PhoenixFlame)
         },
@@ -1583,7 +1842,7 @@ fun SaveApplyBar(
     AnimatedVisibility(
         visible = onChangeCount > 0,
         enter = slideInVertically(tween(300, easing = FastOutSlowInEasing)) { it } + fadeIn(tween(300)),
-        exit  = slideOutVertically(tween(250, easing = FastOutSlowInEasing)) { it } + fadeOut(tween(200)),
+        exit = slideOutVertically(tween(250, easing = FastOutSlowInEasing)) { it } + fadeOut(tween(200)),
         modifier = modifier
     ) {
         Box(

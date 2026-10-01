@@ -33,30 +33,34 @@ class VpnTrackerService : VpnService() {
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val writeMutex = Mutex()
     private var initialized = false
-    @Volatile private var vpnGeneration = 0L
+
+    @Volatile
+    private var vpnGeneration = 0L
 
     // Pre-filtered to isEnabled — updated reactively from DB
-    @Volatile private var cachedRules: List<FilterRule> = emptyList()
+    @Volatile
+    private var cachedRules: List<FilterRule> = emptyList()
 
     companion object {
-        private const val TAG        = "Androwall"
+        private const val TAG = "Androwall"
         private const val CHANNEL_ID = "vpn_channel"
-        private const val NOTIF_ID   = 1
+        private const val NOTIF_ID = 1
         private const val DNS_SERVER = "8.8.8.8"
-        private const val DNS_PORT   = 53
+        private const val DNS_PORT = 53
         private const val PREFS_NAME = "androwall_prefs"
-        private const val KEY_MODE   = "filter_mode"
+        private const val KEY_MODE = "filter_mode"
 
-        const val ACTION_START_VPN    = "com.androwall.ACTION_START_VPN"
-        const val ACTION_STOP_VPN     = "com.androwall.ACTION_STOP_VPN"
-        const val ACTION_RESTART_VPN  = "com.androwall.ACTION_RESTART_VPN"
-        const val ACTION_CLOSE        = "com.androwall.ACTION_CLOSE"
+        const val ACTION_START_VPN = "com.androwall.ACTION_START_VPN"
+        const val ACTION_STOP_VPN = "com.androwall.ACTION_STOP_VPN"
+        const val ACTION_RESTART_VPN = "com.androwall.ACTION_RESTART_VPN"
+        const val ACTION_CLOSE = "com.androwall.ACTION_CLOSE"
+
         // Fired by deleteIntent when OS removes the notification (API 34+ clear-all).
         // Re-posts immediately so the persistent notification is never truly gone.
         // The ONLY valid removal path is the CLOSE button.
         const val ACTION_REPOST_NOTIF = "com.androwall.ACTION_REPOST_NOTIF"
 
-        private val _isRunning  = MutableStateFlow(false)
+        private val _isRunning = MutableStateFlow(false)
         val isRunning: StateFlow<Boolean> = _isRunning
 
         private val _filterMode = MutableStateFlow(FilterMode.BLACKLIST)
@@ -124,6 +128,9 @@ class VpnTrackerService : VpnService() {
             initialized = true
             startForeground(NOTIF_ID, buildNotification(running = false))
 
+            // Initialize EasyList filter engine (auto-updates if stale)
+            FilterListRepo.init(this)
+
             // Keep rule cache in sync reactively
             serviceScope.launch {
                 AppDatabase.getDatabase(this@VpnTrackerService)
@@ -144,7 +151,7 @@ class VpnTrackerService : VpnService() {
         _isRunning.value = false
         runCatching { vpnInterface?.close() }
         vpnInterface = null
-        initialized  = false
+        initialized = false
         super.onDestroy()
     }
 
@@ -171,7 +178,7 @@ class VpnTrackerService : VpnService() {
             } finally {
                 if (myGen == vpnGeneration) {
                     _isRunning.value = false
-                    vpnThread    = null
+                    vpnThread = null
                     runCatching { vpnInterface?.close() }
                     vpnInterface = null
                     updateNotification(running = false)
@@ -190,7 +197,7 @@ class VpnTrackerService : VpnService() {
         vpnThread = null
         vpnGeneration++   // invalidate any stale thread's finally block
         runCatching { vpnInterface?.close() }
-        vpnInterface     = null
+        vpnInterface = null
         _isRunning.value = false
         updateNotification(running = false)
         Log.d(TAG, "VPN tunnel closed — service now in standby")
@@ -199,7 +206,7 @@ class VpnTrackerService : VpnService() {
     // ── VPN setup ─────────────────────────────────────────────────────────────
 
     private fun setupVpn(): Boolean {
-        val db      = AppDatabase.getDatabase(this)
+        val db = AppDatabase.getDatabase(this)
         val configs = runBlocking { db.appDao().getAllAppConfigs().first() }
         val enabled = configs.filter { it.isFilteringEnabled }
         if (enabled.isEmpty()) return false
@@ -212,8 +219,11 @@ class VpnTrackerService : VpnService() {
             .setBlocking(true)           // blocking read avoids busy-loop
 
         enabled.forEach { cfg ->
-            try { builder.addAllowedApplication(cfg.packageName) }
-            catch (e: Exception) { Log.w(TAG, "Skipped unknown package: ${cfg.packageName}") }
+            try {
+                builder.addAllowedApplication(cfg.packageName)
+            } catch (e: Exception) {
+                Log.w(TAG, "Skipped unknown package: ${cfg.packageName}")
+            }
         }
 
         vpnInterface = builder.establish()
@@ -232,7 +242,7 @@ class VpnTrackerService : VpnService() {
         val fis = FileInputStream(vpnInterface!!.fileDescriptor)
         val fos = FileOutputStream(vpnInterface!!.fileDescriptor)
         val buf = ByteArray(32768)
-        val db  = AppDatabase.getDatabase(this)
+        val db = AppDatabase.getDatabase(this)
         Log.d(TAG, "Packet loop started")
 
         while (!Thread.currentThread().isInterrupted) {
@@ -250,17 +260,17 @@ class VpnTrackerService : VpnService() {
     }
 
     private suspend fun handlePacket(raw: ByteArray, fos: FileOutputStream, db: AppDatabase) {
-        val info    = parseDns(raw) ?: return
+        val info = parseDns(raw) ?: return
         val blocked = isDomainBlocked(info.domain)
         Log.d(TAG, "DNS ${info.domain} → ${if (blocked) "BLOCKED" else "allow"}")
         logConnection(db, info.domain, blocked)
 
         val resp = if (blocked) buildNxdomain(info.dnsPayload)
-        else         forwardDns(info.dnsPayload) ?: return
+        else forwardDns(info.dnsPayload) ?: return
 
         val reply = buildIpUdpPacket(
-            srcIp   = info.dstIp, srcPort = DNS_PORT,
-            dstIp   = info.srcIp, dstPort = info.srcPort,
+            srcIp = info.dstIp, srcPort = DNS_PORT,
+            dstIp = info.srcIp, dstPort = info.srcPort,
             payload = resp
         )
         writeMutex.withLock { fos.write(reply) }
@@ -274,33 +284,34 @@ class VpnTrackerService : VpnService() {
     )
 
     private fun parseDns(raw: ByteArray): DnsInfo? {
-        val len  = raw.size
+        val len = raw.size
         if (len < 28) return null
-        val pkt  = ByteBuffer.wrap(raw, 0, len).order(ByteOrder.BIG_ENDIAN)
+        val pkt = ByteBuffer.wrap(raw, 0, len).order(ByteOrder.BIG_ENDIAN)
         val vIhl = pkt.get(0).toInt() and 0xFF
         if (vIhl ushr 4 != 4) return null
-        val ihl  = (vIhl and 0x0F) * 4
+        val ihl = (vIhl and 0x0F) * 4
         if (len < ihl + 8 || pkt.get(9).toInt() and 0xFF != 17) return null
 
         val srcIp = ByteArray(4).also { pkt.position(12); pkt.get(it) }
         val dstIp = ByteArray(4).also { pkt.get(it) }
 
         pkt.position(ihl)
-        val srcPort    = pkt.short.toInt() and 0xFFFF
-        val dstPort    = pkt.short.toInt() and 0xFFFF
+        val srcPort = pkt.short.toInt() and 0xFFFF
+        val dstPort = pkt.short.toInt() and 0xFFFF
         if (dstPort != DNS_PORT) return null
         val udpDataLen = (pkt.short.toInt() and 0xFFFF) - 8
         pkt.short                                           // skip UDP checksum
         if (udpDataLen < 12) return null
 
-        val dns    = ByteArray(udpDataLen).also { pkt.get(it) }
+        val dns = ByteArray(udpDataLen).also { pkt.get(it) }
         val domain = parseDnsName(dns, 12)
         if (domain.isEmpty()) return null
         return DnsInfo(domain, dns, srcIp, srcPort, dstIp)
     }
 
     private fun parseDnsName(dns: ByteArray, start: Int): String {
-        val sb = StringBuilder(); var pos = start
+        val sb = StringBuilder();
+        var pos = start
         return runCatching {
             while (pos < dns.size) {
                 val l = dns[pos].toInt() and 0xFF
@@ -316,9 +327,9 @@ class VpnTrackerService : VpnService() {
     // ── Domain matching ───────────────────────────────────────────────────────
 
     /**
-     * Mirrors the ALLOW/BLOCK priority logic in FilterRules.kt:
-     *   BLACKLIST → ALLOW rule beats BLOCK (explicit allow wins)
-     *   WHITELIST → BLOCK rule beats ALLOW (explicit block wins)
+     * Priority (user rules always win over EasyList):
+     *   BLACKLIST → user ALLOW > EasyList @@ allow > user BLOCK > EasyList || block > default allow
+     *   WHITELIST → user BLOCK > user ALLOW > default block  (EasyList redundant — already max-restriction)
      * cachedRules is already pre-filtered to isEnabled.
      */
     private fun isDomainBlocked(domain: String): Boolean {
@@ -326,26 +337,40 @@ class VpnTrackerService : VpnService() {
 
         val hasAllowMatch = cachedRules
             .filter { it.action == RuleAction.ALLOW }
-            .any    { matchesDomain(lower, it.pattern.lowercase(), it.matchType) }
+            .any { matchesDomain(lower, it.pattern.lowercase(), it.matchType) }
 
         val hasBlockMatch = cachedRules
             .filter { it.action == RuleAction.BLOCK }
-            .any    { matchesDomain(lower, it.pattern.lowercase(), it.matchType) }
+            .any { matchesDomain(lower, it.pattern.lowercase(), it.matchType) }
+
+        // EasyList engine: true=block, false=@@allow, null=no match
+        val easyList = FilterListRepo.engineFlow.value.isBlocked(lower)
 
         return when (_filterMode.value) {
-            FilterMode.BLACKLIST -> if (hasAllowMatch) false else hasBlockMatch
-            FilterMode.WHITELIST -> if (hasBlockMatch) true  else !hasAllowMatch
+            FilterMode.BLACKLIST -> when {
+                hasAllowMatch -> false  // user ALLOW wins over everything
+                easyList == false -> false  // EasyList @@ allow exception
+                hasBlockMatch -> true   // user BLOCK
+                easyList == true -> true   // EasyList || block
+                else -> false  // default: allow in blacklist mode
+            }
+
+            FilterMode.WHITELIST -> when {
+                hasBlockMatch -> true   // user BLOCK wins
+                hasAllowMatch -> false  // user ALLOW
+                else -> true   // default: block in whitelist mode
+            }
         }
     }
 
     private fun matchesDomain(domain: String, pattern: String, type: MatchType): Boolean =
         when (type) {
-            MatchType.EXACT     -> domain == pattern
+            MatchType.EXACT -> domain == pattern
             MatchType.SUBDOMAIN -> domain == pattern || domain.endsWith(".$pattern")
-            MatchType.CONTAINS  -> domain.contains(pattern)
-            MatchType.PREFIX    -> domain.startsWith(pattern)
-            MatchType.SUFFIX    -> domain.endsWith(pattern)
-            MatchType.WILDCARD  -> {
+            MatchType.CONTAINS -> domain.contains(pattern)
+            MatchType.PREFIX -> domain.startsWith(pattern)
+            MatchType.SUFFIX -> domain.endsWith(pattern)
+            MatchType.WILDCARD -> {
                 val regex = pattern.split("*")
                     .joinToString(".*") { Regex.escape(it) }
                 Regex("^$regex$").matches(domain)
@@ -364,7 +389,7 @@ class VpnTrackerService : VpnService() {
             sock.soTimeout = 3_000
             sock.send(DatagramPacket(payload, payload.size, InetAddress.getByName(DNS_SERVER), DNS_PORT))
             val resp = ByteArray(4096)
-            val dp   = DatagramPacket(resp, resp.size)
+            val dp = DatagramPacket(resp, resp.size)
             sock.receive(dp)
             resp.copyOf(dp.length)
         }
@@ -386,17 +411,17 @@ class VpnTrackerService : VpnService() {
         payload: ByteArray
     ): ByteArray {
         val udpLen = 8 + payload.size
-        val ipLen  = 20 + udpLen
-        val pkt    = ByteBuffer.allocate(ipLen).order(ByteOrder.BIG_ENDIAN)
+        val ipLen = 20 + udpLen
+        val pkt = ByteBuffer.allocate(ipLen).order(ByteOrder.BIG_ENDIAN)
 
         pkt.put(0x45.toByte()); pkt.put(0); pkt.putShort(ipLen.toShort())
-        pkt.putShort(0);        pkt.putShort(0x4000.toShort())
-        pkt.put(64);            pkt.put(17)
-        pkt.putShort(0);        pkt.put(srcIp); pkt.put(dstIp)
+        pkt.putShort(0); pkt.putShort(0x4000.toShort())
+        pkt.put(64); pkt.put(17)
+        pkt.putShort(0); pkt.put(srcIp); pkt.put(dstIp)
         pkt.putShort(10, checksum(pkt.array(), 0, 20).toShort())
 
         pkt.putShort(srcPort.toShort()); pkt.putShort(dstPort.toShort())
-        pkt.putShort(udpLen.toShort());  pkt.putShort(0)
+        pkt.putShort(udpLen.toShort()); pkt.putShort(0)
 
         pkt.put(payload)
         return pkt.array()
@@ -404,7 +429,8 @@ class VpnTrackerService : VpnService() {
 
     /** RFC 1071 one's-complement internet checksum. */
     private fun checksum(d: ByteArray, off: Int, len: Int): Int {
-        var s = 0; var i = off
+        var s = 0;
+        var i = off
         while (i < off + len - 1) {
             s += ((d[i].toInt() and 0xFF) shl 8) or (d[i + 1].toInt() and 0xFF); i += 2
         }
@@ -474,7 +500,7 @@ class VpnTrackerService : VpnService() {
             .setContentTitle(if (running) "ANDROWALL  //  ACTIVE" else "ANDROWALL  //  STANDBY")
             .setContentText(
                 if (running) "DNS interception online"
-                else         "Engine offline tap START"
+                else "Engine offline tap START"
             )
             .setSmallIcon(R.drawable.ic_shield)
             .setOngoing(true)                       // disables swipe on API < 34
@@ -482,7 +508,7 @@ class VpnTrackerService : VpnService() {
             .setDeleteIntent(repostPi)               // fires on any OS-level dismissal
             .addAction(
                 if (running) android.R.drawable.ic_media_pause
-                else         android.R.drawable.ic_media_play,
+                else android.R.drawable.ic_media_play,
                 if (running) "STOP" else "START",
                 togglePi
             )
