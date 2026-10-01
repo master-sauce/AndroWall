@@ -9,18 +9,22 @@ AndroWall is a comprehensive Android firewall application that gives you granula
 ## Features
 
 - Per-app firewall — select which apps traffic is intercepted
+- System-wide mode — block ads on ALL apps without per-app selection
 - Blacklist mode — block matched domains, allow rest
 - Whitelist mode — allow matched domains, block rest
 - Rule types: Exact, Subdomain, Contains, Prefix, Suffix, Wildcard (`*.example.com`)
 - Global rules (apply to all enabled apps) and per-app rules
+- EasyList filter lists — system-wide ad blocking with per-list toggle
+- Auto-update — EasyList refreshes every 7 days, other lists bundled
 - DNS activity log with search, blocked/allowed status
 - Add rules directly from log entries
+- Rule import/export — backup and restore rules as JSON
 - Dark and light theme with persistent preference
 - Persistent notification with Start/Stop/Close controls
 - Notification cannot be swiped away (re-posts on dismissal)
 - Privacy-focused: No telemetry or user data collection
 - Open source: Full transparency with auditable code
-- no root: no root is required
+- No root required
 
 ## Purpose & Use Cases
 
@@ -42,10 +46,11 @@ By preventing unnecessary background connections, AndroWall helps reduce data us
 
 1. **Install apk**: Install the apk from the releases tag
 2. **Grant permissions**: When first launched, AndroWall will request VPN permission and notification permissions
-3. **Enable apps**: Navigate to the Apps tab and toggle on filtering for applications you want to protect
-4. **Choose mode**: Choose whitelist or blacklist mode for you prefrence (defualt is blacklist) 
+3. **Choose blocking scope**: Toggle "System-wide mode" on the main screen to block ads on all apps, or leave it off and enable individual apps in the Apps tab
+4. **Choose mode**: Choose whitelist or blacklist mode for your preference (default is blacklist)
 5. **Configure rules**: Add block/allow rules in the Rules tab to customize what traffic is filtered
-6. **Start the firewall**: Press "Start" on the main screen to activate the app service
+6. **Toggle filter lists**: Enable or disable EasyList and other filter lists in the Rules tab — each can be toggled independently
+7. **Start the firewall**: Press "Start" on the main screen to activate the app service
 
 
 ### Creating Rules
@@ -64,6 +69,26 @@ You can create rules with different matching types:
 - **Blacklist** (default): Blocks matched domains and allows everything else
 - **Whitelist**: Allows only matched domains and blocks everything else
 
+### System-Wide Mode
+
+System-wide mode tunnels DNS traffic from ALL apps through the firewall, applying both your custom global rules and enabled filter lists across the entire device. When enabled:
+
+- Per-app controls are greyed out and disabled
+- Only global rules apply (per-app rules become irrelevant since the VPN cannot distinguish which app made a DNS query)
+- The setting persists across app restarts
+
+### Filter Lists
+
+AndroWall bundles four Adblock Plus-format filter lists, each independently toggleable from the Rules tab:
+
+- **EasyList** — general ad blocking (auto-updates every 7 days from easylist.to)
+- **EasyPrivacy** — tracking and analytics domains
+- **EasyList Cookie** — cookie consent notices
+- **EasyList Hebrew** — Hebrew-language ad domains
+
+Only EasyList auto-updates. The other three are bundled with the app and loaded at startup. Toggling a list on or off takes effect immediately without restarting the VPN.
+
+Filter lists extract domain-level rules (`||domain^` and `@@||domain^` exceptions) for DNS blocking. URL-path filters and CSS selectors are skipped as they cannot be evaluated at the DNS level.
 
 ### Logs and Diagnostics
 

@@ -535,13 +535,35 @@ fun MainScreen(navController: NavController, dao: AppDao) {
                 when (selectedTab) {
                     0 -> {
                         PhoenixSearchField(searchQuery, { searchQuery = it }, "Search apps...")
+                        if (systemWide) {
+                            Box(
+                                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)
+                                    .background(PhoenixFlameGhost, PhoenixShapeSmall)
+                                    .border(0.5.dp, PhoenixFlame.copy(0.3f), PhoenixShapeSmall)
+                                    .padding(horizontal = 12.dp, vertical = 8.dp)
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        Icons.Default.Public,
+                                        null,
+                                        tint = PhoenixFlame,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(
+                                        "System-wide mode active — per-app controls disabled",
+                                        fontSize = 11.sp, color = PhoenixFlame.copy(0.85f)
+                                    )
+                                }
+                            }
+                        }
                         LazyColumn(Modifier.weight(1f)) {
                             if (filteredApps.isEmpty()) {
                                 item { PhoenixEmptyState(Icons.Default.Search, "No matching apps found.") }
                             } else {
                                 items(filteredApps, key = { it.packageName }) { app ->
                                     val config = appConfigs.find { it.packageName == app.packageName }
-                                    AppListItem(app, config) {
+                                    AppListItem(app, config, systemWide) {
                                         navController.navigate("app_detail/${app.packageName}")
                                     }
                                 }
@@ -719,14 +741,16 @@ fun FirewallStatusCard(
 // ── App list item ─────────────────────────────────────────────────────────────
 
 @Composable
-fun AppListItem(app: ApplicationInfo, config: AppConfig?, onClick: () -> Unit) {
+fun AppListItem(app: ApplicationInfo, config: AppConfig?, systemWide: Boolean, onClick: () -> Unit) {
     val context = LocalContext.current
     val c = LocalAppColors.current
     val label = remember(app.packageName) { context.packageManager.getApplicationLabel(app).toString() }
     val isEnabled = config?.isFilteringEnabled == true
 
     Row(
-        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 2.dp),
+        Modifier.fillMaxWidth()
+            .then(if (systemWide) Modifier.alpha(0.4f) else Modifier.clickable(onClick = onClick))
+            .padding(horizontal = 16.dp, vertical = 2.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(
@@ -751,14 +775,19 @@ fun AppListItem(app: ApplicationInfo, config: AppConfig?, onClick: () -> Unit) {
                 maxLines = 1, overflow = TextOverflow.Ellipsis
             )
             Text(
-                app.packageName, fontFamily = FontFamily.Monospace, fontSize = 9.sp,
-                color = c.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis
+                if (systemWide) "Managed by system-wide mode" else app.packageName,
+                fontFamily = if (systemWide) FontFamily.Default else FontFamily.Monospace,
+                fontSize = if (systemWide) 10.sp else 9.sp,
+                color = if (systemWide) PhoenixFlame.copy(0.6f) else c.textSecondary,
+                maxLines = 1, overflow = TextOverflow.Ellipsis
             )
         }
-        if (isEnabled) {
+        if (isEnabled && !systemWide) {
             EmberChip("Active", PhoenixFlame); Spacer(Modifier.width(8.dp))
         }
-        Icon(Icons.Default.ChevronRight, null, tint = c.borderBright, modifier = Modifier.size(16.dp))
+        if (!systemWide) {
+            Icon(Icons.Default.ChevronRight, null, tint = c.borderBright, modifier = Modifier.size(16.dp))
+        }
     }
     Box(Modifier.fillMaxWidth().padding(start = 31.dp).height(0.5.dp).background(c.borderFaint))
 }
@@ -1230,6 +1259,7 @@ fun AppDetailScreen(navController: NavController, dao: AppDao, packageName: Stri
     var pendingChangesCount by remember { mutableIntStateOf(0) }
     var showUnsavedDialog by remember { mutableStateOf(false) }
     val isRunning by VpnTrackerService.isRunning.collectAsState()
+    val systemWide by VpnTrackerService.systemWide.collectAsState()
 
     val incrementChanges: () -> Unit = { pendingChangesCount++ }
     val clearChanges: () -> Unit = { pendingChangesCount = 0 }
@@ -1304,6 +1334,11 @@ fun AppDetailScreen(navController: NavController, dao: AppDao, packageName: Stri
     var selectedSection by remember { mutableIntStateOf(0) }
     var showAddRuleDialog by remember { mutableStateOf(false) }
     var showClearLogsDialog by remember { mutableStateOf(false) }
+
+    // Force DNS Activity tab if system-wide mode is active
+    LaunchedEffect(systemWide) {
+        if (systemWide && selectedSection == 1) selectedSection = 0
+    }
     var logSearchQuery by remember { mutableStateOf("") }
 
     val filteredLogs = remember(allLogs, logSearchQuery) {
@@ -1399,10 +1434,12 @@ fun AppDetailScreen(navController: NavController, dao: AppDao, packageName: Stri
                     )
                 }
 
-                1 -> PhoenixFab(
-                    onClick = { showAddRuleDialog = true }, icon = Icons.Default.Add,
-                    color = PhoenixFlame, contentDescription = "Add rule"
-                )
+                1 -> if (!systemWide) {
+                    PhoenixFab(
+                        onClick = { showAddRuleDialog = true }, icon = Icons.Default.Add,
+                        color = PhoenixFlame, contentDescription = "Add rule"
+                    )
+                }
 
                 else -> {}
             }
@@ -1411,15 +1448,17 @@ fun AppDetailScreen(navController: NavController, dao: AppDao, packageName: Stri
         Column(
             Modifier.padding(padding).fillMaxSize().background(c.background)
         ) {
-            // Firewall toggle
+            // Firewall toggle — disabled in system-wide mode
             Box(
                 Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)
                     .background(c.card, PhoenixShapeMedium)
                     .border(
                         1.dp,
-                        if (appConfig?.isFilteringEnabled == true) c.green.copy(0.35f) else c.borderMid,
+                        if (systemWide) PhoenixFlame.copy(0.25f)
+                        else if (appConfig?.isFilteringEnabled == true) c.green.copy(0.35f) else c.borderMid,
                         PhoenixShapeMedium
                     )
+                    .then(if (systemWide) Modifier.alpha(0.5f) else Modifier)
                     .padding(horizontal = 16.dp, vertical = 12.dp)
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1427,27 +1466,39 @@ fun AppDetailScreen(navController: NavController, dao: AppDao, packageName: Stri
                         Text("Firewall Intercept", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = PhoenixFlame)
                         Spacer(Modifier.height(2.dp))
                         Text(
-                            if (appConfig?.isFilteringEnabled == true) "DNS filtering is active"
-                            else "App bypasses the firewall",
+                            when {
+                                systemWide -> "Controlled by system-wide mode"
+                                appConfig?.isFilteringEnabled == true -> "DNS filtering is active"
+                                else -> "App bypasses the firewall"
+                            },
                             fontSize = 11.sp,
-                            color = if (appConfig?.isFilteringEnabled == true) c.green.copy(0.8f) else c.textSecondary
+                            color = when {
+                                systemWide -> PhoenixFlame.copy(0.7f)
+                                appConfig?.isFilteringEnabled == true -> c.green.copy(0.8f)
+                                else -> c.textSecondary
+                            }
                         )
                     }
                     Switch(
                         checked = appConfig?.isFilteringEnabled ?: false,
                         onCheckedChange = { enabled ->
-                            scope.launch { dao.insertAppConfig(AppConfig(packageName, label, enabled)) }
-                            incrementChanges()
+                            if (!systemWide) {
+                                scope.launch { dao.insertAppConfig(AppConfig(packageName, label, enabled)) }
+                                incrementChanges()
+                            }
                         },
+                        enabled = !systemWide,
                         colors = SwitchDefaults.colors(
                             checkedThumbColor = c.void, checkedTrackColor = c.green.copy(0.8f),
-                            uncheckedThumbColor = c.textTertiary, uncheckedTrackColor = c.cardAlt
+                            uncheckedThumbColor = c.textTertiary, uncheckedTrackColor = c.cardAlt,
+                            disabledCheckedThumbColor = c.textTertiary,
+                            disabledUncheckedThumbColor = c.textTertiary
                         )
                     )
                 }
             }
 
-            // Tab selector
+            // Tab selector — "App Rules" disabled in system-wide mode
             Row(
                 Modifier.fillMaxWidth().padding(horizontal = 16.dp)
                     .background(c.card, PhoenixShapeSmall)
@@ -1455,20 +1506,27 @@ fun AppDetailScreen(navController: NavController, dao: AppDao, packageName: Stri
             ) {
                 listOf("DNS Activity", "App Rules").forEachIndexed { idx, tabLabel ->
                     val selected = selectedSection == idx
+                    val tabDisabled = systemWide && idx == 1
                     val display = if (idx == 1 && appRules.isNotEmpty()) "$tabLabel  ${appRules.size}" else tabLabel
                     Box(
                         Modifier.weight(1f)
-                            .background(if (selected) PhoenixFlameGhost else Color.Transparent, PhoenixShapeSmall)
-                            .border(
-                                if (selected) 1.dp else 0.dp,
-                                if (selected) PhoenixFlame.copy(0.4f) else Color.Transparent, PhoenixShapeSmall
+                            .then(if (tabDisabled) Modifier.alpha(0.3f) else Modifier)
+                            .background(
+                                if (selected && !tabDisabled) PhoenixFlameGhost else Color.Transparent,
+                                PhoenixShapeSmall
                             )
-                            .clickable { selectedSection = idx }.padding(vertical = 8.dp),
+                            .border(
+                                if (selected && !tabDisabled) 1.dp else 0.dp,
+                                if (selected && !tabDisabled) PhoenixFlame.copy(0.4f) else Color.Transparent,
+                                PhoenixShapeSmall
+                            )
+                            .then(if (tabDisabled) Modifier else Modifier.clickable { selectedSection = idx })
+                            .padding(vertical = 8.dp),
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
                             display, fontWeight = FontWeight.SemiBold, fontSize = 12.sp,
-                            color = if (selected) PhoenixFlame else c.textSecondary
+                            color = if (selected && !tabDisabled) PhoenixFlame else c.textSecondary
                         )
                     }
                 }
@@ -1496,7 +1554,7 @@ fun AppDetailScreen(navController: NavController, dao: AppDao, packageName: Stri
                             incrementChanges
                         )
                     }
-                } else {
+                } else if (!systemWide) {
                     Column(Modifier.fillMaxSize()) {
                         ImportExportBar(
                             scope = "app:$packageName",
@@ -1507,6 +1565,11 @@ fun AppDetailScreen(navController: NavController, dao: AppDao, packageName: Stri
                         )
                         AppRulesList(appRules, label, globalRules.size, dao, scope, incrementChanges)
                     }
+                } else {
+                    PhoenixEmptyState(
+                        Icons.Default.Public,
+                        "Per-app rules disabled\nSystem-wide mode is active\nUse Global Rules instead"
+                    )
                 }
             }
 
