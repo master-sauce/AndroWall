@@ -980,6 +980,7 @@ private fun FilterListRow(state: ListState) {
                             ListStatus.UPDATING -> c.gold.copy(0.6f)
                             ListStatus.UPDATE_FAILED -> c.red.copy(0.5f)
                             ListStatus.EMPTY -> c.borderMid
+                            ListStatus.UPDATED -> c.green.copy(0.9f)
                             ListStatus.READY -> accent.copy(0.8f)
                         },
                         RoundedCornerShape(50)
@@ -1010,6 +1011,13 @@ private fun FilterListRow(state: ListState) {
                         maxLines = 1
                     )
                 }
+                if (state.status == ListStatus.UPDATED) {
+                    Text(
+                        "  •  updated",
+                        fontSize = 10.sp, color = c.green.copy(0.85f),
+                        maxLines = 1
+                    )
+                }
                 if (state.status == ListStatus.UPDATING) {
                     Text(
                         "  •  updating…",
@@ -1028,6 +1036,20 @@ private fun FilterListRow(state: ListState) {
         }
 
         Spacer(Modifier.width(8.dp))
+
+        // update / retry — always visible, so it can't vanish mid-refresh;
+        // brighter when there is actually something to fix
+        IconButton(
+            onClick = { FilterListRepo.refresh(state.info) },
+            modifier = Modifier.size(30.dp)
+        ) {
+            Icon(
+                Icons.Default.Refresh, "Update now",
+                tint = if (state.status == ListStatus.UPDATE_FAILED || state.status == ListStatus.EMPTY)
+                    c.gold.copy(0.85f) else c.textTertiary.copy(0.55f),
+                modifier = Modifier.size(16.dp)
+            )
+        }
 
         // Toggle switch
         Switch(

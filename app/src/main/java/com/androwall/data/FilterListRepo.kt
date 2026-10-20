@@ -60,7 +60,7 @@ enum class ListInfo(
         displayName = "EasyPrivacy",
         description = "Tracking & analytics",
         assetFile = "easyprivacy.txt",
-        url = "https://easylist.to/easyprivacy/easyprivacy.txt",
+        url = "https://easylist.to/easylist/easyprivacy.txt",
         autoUpdate = true
     ),
     EASYLIST_COOKIE(
@@ -68,7 +68,7 @@ enum class ListInfo(
         displayName = "EasyList Cookie",
         description = "Cookie consent notices",
         assetFile = "easylistcookie.txt",
-        url = "https://easylist.to/list/easylistcookie.txt",
+        url = "https://secure.fanboy.co.nz/fanboy-cookiemonster.txt",
         autoUpdate = true
     ),
     EASYLIST_HEBREW(
@@ -244,7 +244,7 @@ data class ListState(
 )
 
 enum class ListStatus {
-    LOADING, READY, UPDATING, UPDATE_FAILED, EMPTY
+    LOADING, READY, UPDATING, UPDATE_FAILED, EMPTY, UPDATED
 }
 
 // ══ Compiled domain-blocking engine ════════════════════════════════════════════
@@ -516,7 +516,19 @@ object FilterListRepo {
         updateListState(li) { it.copy(status = ListStatus.UPDATING) }
 
         val text = try {
-            download(li.url)
+            // two attempts — app launch often races the network coming up
+            var out: String? = null
+            var last: Exception? = null
+            for (attempt in 1..2) {
+                try {
+                    out = download(li.url)
+                    break
+                } catch (e: Exception) {
+                    last = e
+                    if (attempt == 1) runCatching { Thread.sleep(800) }
+                }
+            }
+            out ?: throw (last ?: IOException("download failed"))
         } catch (e: Exception) {
             Log.w(TAG, "Download failed for ${li.id}: ${e.message}")
             updateListState(li) { it.copy(status = ListStatus.UPDATE_FAILED) }
@@ -561,6 +573,10 @@ object FilterListRepo {
             )
         }
         if (recompileAfter && loaded) recompile()
+        // visible success marker for this session — a later launch starts out READY again
+        updateListState(li) {
+            it.copy(status = ListStatus.UPDATED, ruleCount = count, lastUpdated = lastUpdated(li))
+        }
         Log.d(TAG, "Refreshed ${li.id} — $count DNS rules")
     }
 
@@ -579,7 +595,8 @@ object FilterListRepo {
                     ruleCount = count,
                     lastUpdated = lastUpdated(li),
                     status = when {
-                        count > 0 -> ListStatus.READY
+                        count > 0 ->
+                            if (it.status == ListStatus.UPDATED) ListStatus.UPDATED else ListStatus.READY
                         it.status == ListStatus.UPDATING -> ListStatus.UPDATING
                         else -> ListStatus.EMPTY
                     }
@@ -638,17 +655,19 @@ object FilterListRepo {
             ?: return null  // no checksum header → size check only
 
         val computed = checksum(text)
-        return if (!header.equals(computed, ignoreCase = true)) "checksum mismatch" else null
+        // padding-insensitive on both sides — some publishers keep the '=' padding
+        return if (!header.trimEnd('=').equals(computed, ignoreCase = true)) "checksum mismatch" else null
     }
 
-    /** Adblock Plus checksum: remove the checksum line, MD5 the rest, Base64 encode. */
+    /** Adblock Plus checksum: remove the checksum line, MD5 the rest, Base64 encode
+     *  WITHOUT padding — published headers are padding-stripped (e.g. "fKeJBo…9rw"). */
     private fun checksum(text: String): String {
         val stripped = text.lines()
             .filterNot { it.trim().startsWith("! Checksum:") }
             .joinToString("\n")
         val md5 = MessageDigest.getInstance("MD5")
             .digest(stripped.toByteArray(Charsets.UTF_8))
-        return Base64.encodeToString(md5, Base64.NO_WRAP)
+        return Base64.encodeToString(md5, Base64.NO_WRAP).trimEnd('=')
     }
 
     // ── Adblock Plus / hosts parser (DNS-relevant domain rules only) ──────────
