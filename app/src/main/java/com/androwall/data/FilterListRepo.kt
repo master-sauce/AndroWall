@@ -22,9 +22,20 @@ import java.util.Locale
 
 // ══ Filter list identifiers ════════════════════════════════════════════════════
 //
-//  EASYLIST is the only list with auto-update enabled (7-day cadence).
-//  The other three are bundled-only — loaded at startup, never refreshed.
-//  All four can be toggled on/off by the user from the Global Rules tab.
+//  Every list auto-updates on the 7-day cadence while enabled. All ship a
+//  bundled copy in assets/filters/ so first launch blocks offline.
+//
+//  DNS-level reality: this engine only consumes domain rules (||domain^ /
+//  @@||domain^ / hosts lines) — path rules are irrelevant for a resolver and
+//  are skipped by the parser. Wildcard rules cost a regex scan per DNS query,
+//  so both parsing and merging enforce hard caps (see repo constants).
+//
+//  defaultEnabled=false keeps foreign-language lists and the 233k-rule oisd
+//  list OFF until the user switches them on — parsing every list at once is
+//  an OutOfMemory risk inside the always-on VPN process.
+//
+//  enforceChecksum=false is for ABP's anti-adblock list only: its published
+//  "! Checksum:" header does not follow the standard tooling digest.
 //
 enum class ListInfo(
     val id: String,
@@ -32,7 +43,9 @@ enum class ListInfo(
     val description: String,
     val assetFile: String,
     val url: String,
-    val autoUpdate: Boolean
+    val autoUpdate: Boolean,
+    val enforceChecksum: Boolean = true,
+    val defaultEnabled: Boolean = true
 ) {
     EASYLIST(
         id = "easylist",
@@ -47,24 +60,176 @@ enum class ListInfo(
         displayName = "EasyPrivacy",
         description = "Tracking & analytics",
         assetFile = "easyprivacy.txt",
-        url = "",
-        autoUpdate = false
+        url = "https://easylist.to/easyprivacy/easyprivacy.txt",
+        autoUpdate = true
     ),
     EASYLIST_COOKIE(
         id = "easylist_cookie",
         displayName = "EasyList Cookie",
         description = "Cookie consent notices",
         assetFile = "easylistcookie.txt",
-        url = "",
-        autoUpdate = false
+        url = "https://easylist.to/list/easylistcookie.txt",
+        autoUpdate = true
     ),
     EASYLIST_HEBREW(
         id = "easylist_hebrew",
         displayName = "EasyList Hebrew",
         description = "Hebrew-language ads",
         assetFile = "easylisthebrew.txt",
-        url = "",
-        autoUpdate = false
+        url = "https://raw.githubusercontent.com/easylist/EasyListHebrew/master/EasyListHebrew.txt",
+        autoUpdate = true
+    ),
+
+    // ── uBlock Origin lists ──────────────────────────────────────────────────
+    UBLOCK(
+        id = "ublock",
+        displayName = "uBlock filters",
+        description = "uBO's curated ad rules",
+        assetFile = "ublock.txt",
+        url = "https://raw.githubusercontent.com/uBlockOrigin/uAssets/master/filters/filters.txt",
+        autoUpdate = true
+    ),
+    UBLOCK_UNBREAK(
+        id = "ublock_unbreak",
+        displayName = "uBlock — Unbreak",
+        description = "Exception rules for broken sites",
+        assetFile = "ublock_unbreak.txt",
+        url = "https://raw.githubusercontent.com/uBlockOrigin/uAssets/master/filters/unbreak.txt",
+        autoUpdate = true
+    ),
+    UBLOCK_ABUSE(
+        id = "ublock_abuse",
+        displayName = "uBlock — Resource abuse",
+        description = "Malware & resource abuse",
+        assetFile = "ublock_abuse.txt",
+        url = "https://raw.githubusercontent.com/uBlockOrigin/uAssets/master/filters/resource-abuse.txt",
+        autoUpdate = true
+    ),
+    UBLOCK_ANNOY(
+        id = "ublock_annoy",
+        displayName = "uBlock — Other annoyances",
+        description = "Popups, overlays, social widgets",
+        assetFile = "ublock_annoy.txt",
+        url = "https://raw.githubusercontent.com/uBlockOrigin/uAssets/master/filters/annoyances-others.txt",
+        autoUpdate = true
+    ),
+
+    // ── AdGuard lists ────────────────────────────────────────────────────────
+    ADGUARD_BASE(
+        id = "adguard_base",
+        displayName = "AdGuard Base",
+        description = "AdGuard ads (no EasyList overlap)",
+        assetFile = "adguard_base.txt",
+        url = "https://filters.adtidy.org/extension/ublock/filters/2_without_easylist.txt",
+        autoUpdate = true
+    ),
+    ADGUARD_MOBILE(
+        id = "adguard_mobile",
+        displayName = "AdGuard Mobile Ads",
+        description = "Mobile app & in-app ads",
+        assetFile = "adguard_mobile.txt",
+        url = "https://filters.adtidy.org/extension/ublock/filters/11.txt",
+        autoUpdate = true
+    ),
+    ADGUARD_ANNOY(
+        id = "adguard_annoy",
+        displayName = "AdGuard Annoyances",
+        description = "Banners, popups, cookie nagging",
+        assetFile = "adguard_annoy.txt",
+        url = "https://filters.adtidy.org/extension/ublock/filters/14.txt",
+        autoUpdate = true
+    ),
+    ADGUARD_SOCIAL(
+        id = "adguard_social",
+        displayName = "AdGuard Social",
+        description = "Social media widgets & trackers",
+        assetFile = "adguard_social.txt",
+        url = "https://filters.adtidy.org/extension/ublock/filters/9.txt",
+        autoUpdate = true
+    ),
+    ADGUARD_RU(
+        id = "adguard_ru",
+        displayName = "AdGuard Russian",
+        description = "Russian-language ads",
+        assetFile = "adguard_ru.txt",
+        url = "https://filters.adtidy.org/windows/filters/1.txt?id=1",
+        autoUpdate = true,
+        defaultEnabled = false
+    ),
+    ADGUARD_TR(
+        id = "adguard_tr",
+        displayName = "AdGuard Turkish",
+        description = "Turkish-language ads",
+        assetFile = "adguard_tr.txt",
+        url = "https://filters.adtidy.org/windows/filters/13.txt?id=13",
+        autoUpdate = true,
+        defaultEnabled = false
+    ),
+
+    // ── Fanboy lists ─────────────────────────────────────────────────────────
+    FANBOY_ANNOY(
+        id = "fanboy_annoy",
+        displayName = "Fanboy Annoyances",
+        description = "Overlaps AdGuard Annoyances",
+        assetFile = "fanboy_annoy.txt",
+        url = "https://secure.fanboy.co.nz/fanboy-annoyance.txt",
+        autoUpdate = true,
+        defaultEnabled = false
+    ),
+    FANBOY_INDIAN(
+        id = "fanboy_indian",
+        displayName = "Fanboy Indian",
+        description = "Indian-language ads",
+        assetFile = "fanboy_indian.txt",
+        url = "https://secure.fanboy.co.nz/fanboy-indian.txt",
+        autoUpdate = true,
+        defaultEnabled = false
+    ),
+
+    // ── anti-adblock ─────────────────────────────────────────────────────────
+    ANTIADB_ABP(
+        id = "antiadb_abp",
+        displayName = "Anti-Adblock (ABP)",
+        description = "Blocks anti-adblock scripts",
+        assetFile = "antiadb_abp.txt",
+        url = "https://easylist-downloads.adblockplus.org/antiadblockfilters.txt",
+        autoUpdate = true,
+        enforceChecksum = false
+    ),
+    ANTIADB_REEK(
+        id = "antiadb_reek",
+        displayName = "Anti-Adblock Killer",
+        description = "Reek's anti-adblock rules",
+        assetFile = "antiadb_reek.txt",
+        url = "https://raw.githubusercontent.com/reek/anti-adblock-killer/master/anti-adblock-killer-filters.txt",
+        autoUpdate = true
+    ),
+    FUCKFUCK(
+        id = "fuckfuck",
+        displayName = "Fuck Fuckadblock",
+        description = "Anti-adblock bypass filters",
+        assetFile = "fuckfuck.txt",
+        url = "https://raw.githubusercontent.com/bogachenko/fuckfuckadblock/master/fuckfuckadblock.txt",
+        autoUpdate = true
+    ),
+
+    // ── big community blocklists ─────────────────────────────────────────────
+    YOYO_HOSTS(
+        id = "yoyo_hosts",
+        displayName = "Peter Lowe (hosts)",
+        description = "Ads + trackers, hosts format",
+        assetFile = "yoyo_hosts.txt",
+        url = "https://pgl.yoyo.org/adservers/serverlist.php?hostformat=hosts&showintro=1&mimetype=plaintext",
+        autoUpdate = true
+    ),
+    OISD_BIG(
+        id = "oisd_big",
+        displayName = "oisd big",
+        description = "233k domains — heavy on memory",
+        assetFile = "oisd_big.txt",
+        url = "https://abp.oisd.nl",
+        autoUpdate = true,
+        defaultEnabled = false
     );
 }
 
@@ -165,6 +330,18 @@ object FilterListRepo {
     private const val TAG = "FilterListRepo"
     private val staleAfter = java.time.Duration.ofDays(7)
 
+    // ── DNS hot-path failsafes ───────────────────────────────────────────────
+    // isBlocked() runs on EVERY DNS query and wildcard rules cost a regex scan
+    // each, so wildcards are hard-capped per list and in the merged engine — a
+    // hostile/huge list can never slow the resolver down.
+    private const val MAX_WILDCARDS_PER_LIST = 500
+    private const val MAX_WILDCARDS_TOTAL = 2_000
+    // downloads with more lines than this are rejected outright (VPN heap guard)
+    private const val MAX_LIST_LINES = 400_000
+
+    /** parsed engine per loaded list — toggles and refreshes never re-parse 22 MB */
+    private val parsedCache = java.util.concurrent.ConcurrentHashMap<ListInfo, BlockerEngine>()
+
     @Volatile
     private var initialized = false
 
@@ -206,6 +383,9 @@ object FilterListRepo {
             ListState(it, isEnabled(it), 0, 0L, ListStatus.LOADING)
         }
         repoScope.launch {
+            // a killed process can leave half-written "<id>.txt.tmp" updates behind —
+            // never read (the active cache is "<id>.txt"), only wasted space
+            runCatching { dir.listFiles { f -> f.name.endsWith(".txt.tmp") }?.forEach { it.delete() } }
             loadAll()
             maybeRefresh()
         }
@@ -214,13 +394,31 @@ object FilterListRepo {
     // ── Per-list enable/disable toggle ─────────────────────────────────────────
 
     fun setEnabled(li: ListInfo, enabled: Boolean) {
+        if (!this::prefs.isInitialized) return   // called before init() — nothing to persist to
         prefs.edit().putBoolean("fl_${li.id}_enabled", enabled).apply()
         updateListState(li) { it.copy(enabled = enabled) }
-        repoScope.launch { recompile() }
+        repoScope.launch {
+            if (enabled) {
+                // parse lazy — the list was never loaded while disabled
+                if (parsedCache[li] == null) {
+                    val engine = loadList(li)
+                    val count = engine.blockDomains.size + engine.allowDomains.size
+                    updateListState(li) {
+                        it.copy(
+                            ruleCount = count,
+                            status = if (count == 0) ListStatus.EMPTY else ListStatus.READY
+                        )
+                    }
+                }
+            } else {
+                parsedCache.remove(li)   // free the domains — the VPN process is memory-tight
+            }
+            recompile()
+        }
     }
 
     private fun isEnabled(li: ListInfo): Boolean =
-        prefs.getBoolean("fl_${li.id}_enabled", true)
+        prefs.getBoolean("fl_${li.id}_enabled", li.defaultEnabled)
 
     // ── Load all enabled lists from cache or bundled asset ─────────────────────
 
@@ -249,37 +447,59 @@ object FilterListRepo {
         )
     }
 
+    /**
+     * Parses one list from the cache file (or the bundled asset on first run).
+     * Results live in [parsedCache] — the parsed engine is reused until the
+     * list is refreshed or disabled, so a toggle never costs a re-parse.
+     * Throwable-guarded: one oversized/corrupt list can't crash the VPN.
+     */
     private fun loadList(li: ListInfo): BlockerEngine {
-        val cached = File(dir, "${li.id}.txt")
-        val text = if (cached.exists()) {
-            cached.readText()
-        } else {
-            // First run — copy bundled asset to cache.
-            try {
-                val asset = appContext.assets.open("filters/${li.assetFile}")
-                    .bufferedReader().use { it.readText() }
-                dir.mkdirs()
-                cached.writeText(asset)
-                asset
-            } catch (e: Exception) {
-                Log.w(TAG, "No cached or bundled list for ${li.id}: ${e.message}")
-                return BlockerEngine.EMPTY
+        parsedCache[li]?.let { return it }
+        val result = try {
+            val cached = File(dir, "${li.id}.txt")
+            val text = when {
+                cached.exists() -> cached.readText()
+                li.assetFile.isNotEmpty() -> {
+                    val asset = appContext.assets.open("filters/${li.assetFile}")
+                        .bufferedReader().use { it.readText() }
+                    runCatching {
+                        dir.mkdirs()
+                        cached.writeText(asset)
+                    }
+                    asset
+                }
+                else -> return BlockerEngine.EMPTY
             }
+            parseEasyList(text)
+        } catch (t: Throwable) {
+            // OOM / corrupt cache / missing asset — this ONE list stays empty
+            Log.w(TAG, "List ${li.id} failed to load: ${t.message}")
+            BlockerEngine.EMPTY
         }
-        return parseEasyList(text)
+        parsedCache[li] = result
+        return result
     }
 
-    // ── Auto-refresh (EASYLIST only) ──────────────────────────────────────────
+    // ── Auto-refresh (every enabled list, 7-day cadence) ───────────────────────
 
+    /**
+     * Sequential on purpose: one download at a time with a short gap, then ONE
+     * engine rebuild at the end. 17 parallel downloads + a full reprocess per
+     * list is what starves the VPN process (and its foreground DNS path).
+     */
     private fun maybeRefresh() {
-        for (li in ListInfo.entries) {
-            if (li.autoUpdate && isEnabled(li) && stale(li)) refresh(li)
+        val todo = ListInfo.entries.filter { li -> li.autoUpdate && isEnabled(li) && stale(li) }
+        if (todo.isEmpty()) return
+        for (li in todo) {
+            runCatching { doRefresh(li, recompileAfter = false) }
+            runCatching { Thread.sleep(500) }
         }
+        runCatching { recompile() }
     }
 
     /** Manual refresh of a single list. */
     fun refresh(li: ListInfo) {
-        if (li.url.isEmpty()) return
+        if (li.url.isEmpty() || !this::prefs.isInitialized) return
         repoScope.launch { doRefresh(li) }
     }
 
@@ -291,7 +511,7 @@ object FilterListRepo {
         return System.currentTimeMillis() - ts > staleAfter.toMillis()
     }
 
-    private fun doRefresh(li: ListInfo) {
+    private fun doRefresh(li: ListInfo, recompileAfter: Boolean = true) {
         Log.d(TAG, "Refreshing ${li.id} from ${li.url}...")
         updateListState(li) { it.copy(status = ListStatus.UPDATING) }
 
@@ -303,31 +523,48 @@ object FilterListRepo {
             return  // cached copy stays active
         }
 
-        val error = validate(text)
+        val error = validate(text, li)
         if (error != null) {
             Log.w(TAG, "Validation failed for ${li.id}: $error — keeping cached copy")
             updateListState(li) { it.copy(status = ListStatus.UPDATE_FAILED) }
             return
         }
 
-        // Atomic write: .tmp then rename
-        dir.mkdirs()
-        val tmp = File(dir, "${li.id}.txt.tmp")
-        tmp.writeText(text)
-        if (!tmp.renameTo(File(dir, "${li.id}.txt"))) {
-            Log.w(TAG, "Rename failed for ${li.id} — cache not updated")
-            tmp.delete()
+        // parse BEFORE writing — a list that can't be parsed never replaces the cache
+        val parsed = try {
+            parseEasyList(text)
+        } catch (t: Throwable) {
+            Log.w(TAG, "Parse failed for ${li.id}: ${t.message} — keeping cached copy")
             updateListState(li) { it.copy(status = ListStatus.UPDATE_FAILED) }
             return
         }
 
-        val ts = System.currentTimeMillis()
-        prefs.edit().putLong("fl_${li.id}_ts", ts).apply()
+        // Atomic write: .tmp then rename (a killed process can't corrupt the active list)
+        dir.mkdirs()
+        val tmp = File(dir, "${li.id}.txt.tmp")
+        tmp.writeText(text)
+        if (!tmp.renameTo(File(dir, "${li.id}.txt"))) {
+            tmp.delete()
+            Log.w(TAG, "Rename failed for ${li.id} — cache not updated")
+            updateListState(li) { it.copy(status = ListStatus.UPDATE_FAILED) }
+            return
+        }
 
-        if (loaded) recompile()
-        Log.d(TAG, "Refreshed ${li.id} — engine recompiled")
+        prefs.edit().putLong("fl_${li.id}_ts", System.currentTimeMillis()).apply()
+        parsedCache[li] = parsed
+        val count = parsed.blockDomains.size + parsed.allowDomains.size
+        updateListState(li) {
+            it.copy(
+                ruleCount = count,
+                lastUpdated = lastUpdated(li),
+                status = if (count == 0) ListStatus.EMPTY else ListStatus.READY
+            )
+        }
+        if (recompileAfter && loaded) recompile()
+        Log.d(TAG, "Refreshed ${li.id} — $count DNS rules")
     }
 
+    /** Engine rebuild from the parsed cache — no disk, no re-parse. */
     private fun recompile() {
         val engines = ListInfo.entries.map { li ->
             if (!isEnabled(li)) {
@@ -341,7 +578,11 @@ object FilterListRepo {
                     enabled = true,
                     ruleCount = count,
                     lastUpdated = lastUpdated(li),
-                    status = if (count == 0) ListStatus.EMPTY else ListStatus.READY
+                    status = when {
+                        count > 0 -> ListStatus.READY
+                        it.status == ListStatus.UPDATING -> ListStatus.UPDATING
+                        else -> ListStatus.EMPTY
+                    }
                 )
             }
             engine
@@ -371,20 +612,27 @@ object FilterListRepo {
 
     // ── Validation gate ───────────────────────────────────────────────────────
     //
-    //  Rejects truncated/corrupted downloads so the cache survives:
+    //  Rejects truncated/corrupted/oversized downloads so the cache survives:
     //    1. Minimum rule count (non-comment, non-header lines)
-    //    2. If "! Checksum:" header present → verify Base64(MD5) digest
+    //    2. Maximum line count — a hostile list must not exhaust the VPN heap
+    //    3. If "! Checksum:" header present → verify Base64(MD5) digest
+    //       (skipped for lists whose published header follows other tooling)
     //
 
-    private fun validate(text: String): String? {
-        val rules = text.lines().count {
-            val t = it.trim()
-            t.isNotEmpty() && !t.startsWith("!") && !t.startsWith("[")
+    private fun validate(text: String, li: ListInfo): String? {
+        var rules = 0
+        var lines = 0
+        for (l in text.lineSequence()) {
+            lines++
+            val t = l.trim()
+            if (t.isNotEmpty() && !t.startsWith("!") && !t.startsWith("[")) rules++
         }
         if (rules < 40) return "too few rules ($rules)"
+        if (lines > MAX_LIST_LINES) return "too large ($lines lines)"
+        if (!li.enforceChecksum) return null
 
         // Checksum verification (if header present)
-        val header = text.lines()
+        val header = text.lineSequence()
             .firstOrNull { it.trim().startsWith("! Checksum:") }
             ?.substringAfter("! Checksum:")?.trim()
             ?: return null  // no checksum header → size check only
@@ -403,11 +651,12 @@ object FilterListRepo {
         return Base64.encodeToString(md5, Base64.NO_WRAP)
     }
 
-    // ── Adblock Plus parser (DNS-relevant domain rules only) ──────────────────
+    // ── Adblock Plus / hosts parser (DNS-relevant domain rules only) ──────────
     //
     //  Extracts ||domain^ rules → SUBDOMAIN match (blockDomains set)
     //  Extracts @@||domain^ rules → allow exception (allowDomains set)
-    //  Wildcard * patterns → regex (blockWildcards / allowWildcards)
+    //  Extracts hosts lines ("0.0.0.0 domain" / "127.0.0.1 domain") → blockDomains
+    //  Wildcard * patterns → regex, HARD-CAPPED (a regex is scanned per DNS query)
     //
     //  Skipped (not applicable at DNS level):
     //    - Comments (!, [) and empty lines
@@ -415,6 +664,9 @@ object FilterListRepo {
     //    - Rules with / : ^ in the domain part (URL-specific, not pure domains)
     //    - $domain= / $sitekey= modifiers (context-dependent, can't evaluate at DNS)
     //
+
+    /** hosts-file line — `0.0.0.0 domain.tld` / `127.0.0.1 domain.tld` (+ trailing comment). */
+    private val hostsLine = Regex("""^(?:0\.0\.0\.0|127\.0\.0\.1|::1?)\s+([^#\s]+)""")
 
     private fun parseEasyList(text: String): BlockerEngine {
         val blockDomains = mutableSetOf<String>()
@@ -427,9 +679,16 @@ object FilterListRepo {
             if (trimmed.isEmpty()) continue
             if (trimmed.startsWith("!") || trimmed.startsWith("[")) continue
 
+            // hosts-format lines → the same ||domain^ domain rule (prefix check first:
+            // a regex probe on every line of a 60k-line list is startup latency)
+            val normalized =
+                if (trimmed.startsWith("0.0.0.0") || trimmed.startsWith("127.0.0.1") || trimmed.startsWith("::1"))
+                    hostsLine.find(trimmed)?.let { "||${it.groupValues[1]}^" } ?: trimmed
+                else trimmed
+
             // Allowlist exception (@@)
-            val isAllow = trimmed.startsWith("@@")
-            val rule = if (isAllow) trimmed.substring(2) else trimmed
+            val isAllow = normalized.startsWith("@@")
+            val rule = if (isAllow) normalized.substring(2) else normalized
 
             // Only || rules (domain-level)
             if (!rule.startsWith("||")) continue
@@ -462,6 +721,8 @@ object FilterListRepo {
             if (pattern.isEmpty()) continue
 
             if (pattern.contains('*')) {
+                // DNS hot-path cap — wildcards are regex scans on every query
+                if (blockWildcards.size + allowWildcards.size >= MAX_WILDCARDS_PER_LIST) continue
                 val regexStr = "^" + pattern.split("*")
                     .joinToString(".*") { Regex.escape(it) } + "$"
                 val regex = Regex(regexStr, RegexOption.IGNORE_CASE)
@@ -481,8 +742,9 @@ object FilterListRepo {
         return BlockerEngine(
             blockDomains = engines.flatMap { it.blockDomains }.toSet(),
             allowDomains = engines.flatMap { it.allowDomains }.toSet(),
-            blockWildcards = engines.flatMap { it.blockWildcards },
-            allowWildcards = engines.flatMap { it.allowWildcards }
+            // merged wildcard cap — bounds the per-DNS-query regex work
+            blockWildcards = engines.flatMap { it.blockWildcards }.take(MAX_WILDCARDS_TOTAL),
+            allowWildcards = engines.flatMap { it.allowWildcards }.take(MAX_WILDCARDS_TOTAL)
         )
     }
 
@@ -498,7 +760,11 @@ object FilterListRepo {
         prefs.getLong("fl_${li.id}_ts", 0L)
 
     private fun updateListState(li: ListInfo, transform: (ListState) -> ListState) {
-        _listStates.value = _listStates.value.map { if (it.info == li) transform(it) else it }
+        // loadAll / toggle / refresh run on parallel IO coroutines — serialize the
+        // read-modify-write so no status update ever gets lost
+        synchronized(_listStates) {
+            _listStates.value = _listStates.value.map { if (it.info == li) transform(it) else it }
+        }
     }
 
     /** Formats timestamp for display; returns "—" if 0. */

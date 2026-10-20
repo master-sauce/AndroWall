@@ -995,27 +995,33 @@ private fun FilterListRow(state: ListState) {
                 color = if (state.enabled) c.textPrimary else c.textSecondary
             )
             Row(verticalAlignment = Alignment.CenterVertically) {
+                // the description shrinks with an ellipsis; the rules/status suffix never does
                 Text(
                     state.info.description,
-                    fontSize = 10.sp, color = c.textTertiary
+                    fontSize = 10.sp, color = c.textTertiary,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false)
                 )
                 if (state.enabled && state.ruleCount > 0) {
                     Text(
                         "  •  ${state.ruleCount} rules",
                         fontSize = 10.sp, fontFamily = FontFamily.Monospace,
-                        color = c.textSecondary.copy(0.6f)
+                        color = c.textSecondary.copy(0.6f),
+                        maxLines = 1
                     )
                 }
                 if (state.status == ListStatus.UPDATING) {
                     Text(
                         "  •  updating…",
-                        fontSize = 10.sp, color = c.gold.copy(0.7f)
+                        fontSize = 10.sp, color = c.gold.copy(0.7f),
+                        maxLines = 1
                     )
                 }
                 if (state.status == ListStatus.UPDATE_FAILED) {
                     Text(
                         "  •  update failed",
-                        fontSize = 10.sp, color = c.red.copy(0.7f)
+                        fontSize = 10.sp, color = c.red.copy(0.7f),
+                        maxLines = 1
                     )
                 }
             }
