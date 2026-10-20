@@ -14,8 +14,12 @@ AndroWall is a comprehensive Android firewall application that gives you granula
 - Whitelist mode — allow matched domains, block rest
 - Rule types: Exact, Subdomain, Contains, Prefix, Suffix, Wildcard (`*.example.com`)
 - Global rules (apply to all enabled apps) and per-app rules
-- EasyList filter lists — system-wide ad blocking with per-list toggle
-- Auto-update — EasyList refreshes every 7 days, other lists bundled
+- **21 bundled ad & tracker filter lists** — EasyList, EasyPrivacy, EasyList Cookie, EasyList Hebrew, uBlock Origin ×4 (ads / unbreak / resource abuse / other annoyances), AdGuard ×6 (base / mobile / annoyances / social / Russian / Turkish), Fanboy ×2, anti-adblock ×3, Peter Lowe hosts, oisd big
+- **Weekly auto-update for every enabled list** — checked at each app/service start, downloaded one at a time, one engine rebuild at the end
+- **Bundled offline copies** — first launch blocks out of the box, no network needed
+- **Checksum + size validation** — a truncated or corrupted download never replaces the last good copy; oversized lists are rejected
+- **Per-list status & control** — ready / updating / updated / failed / empty, independent toggles, and an update button on every row
+- **Memory-safe by design** — disabled lists are never parsed, heavy and foreign-language lists ship off, parsed engines are cached (no re-parsing on toggles) and DNS wildcard rules are hard-capped
 - DNS activity log with search, blocked/allowed status
 - Add rules directly from log entries
 - Rule import/export — backup and restore rules as JSON
@@ -49,7 +53,7 @@ By preventing unnecessary background connections, AndroWall helps reduce data us
 3. **Choose blocking scope**: Toggle "System-wide mode" on the main screen to block ads on all apps, or leave it off and enable individual apps in the Apps tab
 4. **Choose mode**: Choose whitelist or blacklist mode for your preference (default is blacklist)
 5. **Configure rules**: Add block/allow rules in the Rules tab to customize what traffic is filtered
-6. **Toggle filter lists**: Enable or disable EasyList and other filter lists in the Rules tab — each can be toggled independently
+6. **Toggle filter lists**: Enable or disable any of the 21 filter lists in the Rules tab — each has its own switch, status and update button
 7. **Start the firewall**: Press "Start" on the main screen to activate the app service
 
 
@@ -79,16 +83,27 @@ System-wide mode tunnels DNS traffic from ALL apps through the firewall, applyin
 
 ### Filter Lists
 
-AndroWall bundles four Adblock Plus-format filter lists, each independently toggleable from the Rules tab:
+AndroWall bundles **21 Adblock Plus / hosts-style filter lists** in the APK, every one independently toggleable from the Rules tab:
 
-- **EasyList** — general ad blocking (auto-updates every 7 days from easylist.to)
-- **EasyPrivacy** — tracking and analytics domains
-- **EasyList Cookie** — cookie consent notices
-- **EasyList Hebrew** — Hebrew-language ad domains
+| List | Notes |
+|---|---|
+| EasyList | General ads |
+| EasyPrivacy | Tracking & analytics |
+| EasyList Cookie (Fanboy Cookiemonster) | Cookie consent notices |
+| EasyList Hebrew | Hebrew-language ads |
+| uBlock filters / Unbreak / Resource abuse / Other annoyances | uBlock Origin's own lists |
+| AdGuard Base / Mobile / Annoyances / Social | AdGuard's core lists |
+| AdGuard Russian / Turkish | Foreign-language lists — **off by default** |
+| Fanboy Annoyances / Indian | Overlapping/foreign lists — **off by default** |
+| Anti-Adblock (ABP) / Anti-Adblock Killer / Fuck Fuckadblock | Anti-adblock bypass counters |
+| Peter Lowe (hosts format) | Ads + trackers |
+| oisd big | 233k domains — heavy, **off by default** |
 
-Only EasyList auto-updates. The other three are bundled with the app and loaded at startup. Toggling a list on or off takes effect immediately without restarting the VPN.
+**Updates:** every enabled list refreshes on a 7-day cadence, checked at each app/service start. Downloads run sequentially (one at a time, with a short gap) and the engine is rebuilt once at the end. The update button on any row forces a refresh immediately — success shows as `updated · N rules`, failures stay on the previous cached copy.
 
-Filter lists extract domain-level rules (`||domain^` and `@@||domain^` exceptions) for DNS blocking. URL-path filters and CSS selectors are skipped as they cannot be evaluated at the DNS level.
+**Safety:** downloads must pass a minimum rule count, a maximum size and — when the list publishes one — a `! Checksum:` digest before they replace the cached copy (atomic temp-file + rename; a killed process can't corrupt the active list). Disabled lists are never downloaded or parsed, and toggling one off frees its memory, because the always-on VPN process is kept lean.
+
+**DNS-level extraction:** filter lists are reduced to what a resolver can act on — `||domain^` block rules, `@@||domain^` exceptions and hosts-file lines (`0.0.0.0 domain`). URL-path filters and CSS selectors are skipped as they cannot be evaluated at the DNS level. Wildcard domain rules are capped (per list and in the merged engine) so lookups stay fast.
 
 ### Logs and Diagnostics
 
